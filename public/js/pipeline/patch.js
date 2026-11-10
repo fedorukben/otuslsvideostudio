@@ -187,72 +187,107 @@ const same = (x, y) => x === y || (x.endsWith("-") && x.length > 2 && y.startsWi
 // Words that people stumble on and repeat ("the the", "so so"); a repeat of other single words is often on purpose.
 const STUMBLE = new Set("a an the and but so to of in on is it it's i i'm we we're you you're this that that's if then when what which there they".split(" "));
 
-// Finds restarts in the transcript: the narrator's own repeats ("so the, so the …"), half words ("deriv- derivative"),
-// and the ones the transcript check flagged. Returns [{i, start, len, cut, approx, a, b}] with cut times once located.
+// Finds restarts: the narrator's own repeats ("so the, so the …"), half words ("deriv- derivative"),
+// and every restart the transcript check flagged. Each is placed on the word timings when there are some
+// (exact), otherwise on the caption or raw transcript (estimated). Flagged ones are never dropped: if their
+// words can't be found they're listed with a rough position to adjust by ear.
+// Returns [{i, basis, start, len, cut, why, a, b, approx, unplaced}].
+const wordToks = (c) => { const out = []; (c.words || []).forEach((w, wi) => toks(w.w).forEach((t) => out.push({ t, wi }))); return out; };
+function findIn(list, cut) {
+  const L = cut.length;
+  if (!L || list.length < L) return -1;
+  let best = -1, bestScore = 0;
+  for (let k = 0; k + L <= list.length; k++) {
+    let sc = 0;
+    for (let j = 0; j < L; j++) if (same(cut[j], list[k + j]) || same(list[k + j], cut[j])) sc++;
+    if (sc > bestScore) { bestScore = sc; best = k; }
+  }
+  return bestScore >= Math.max(1, Math.ceil(L * 0.7)) ? best : -1;
+}
+function repeatsIn(t) {
+  const found = [];
+  for (let k = 0; k < t.length; k++) {
+    for (let L = 5; L >= 1; L--) {
+      if (k + 2 * L > t.length) continue;
+      let ok = true;
+      for (let j = 0; j < L; j++) if (!same(t[k + j], t[k + L + j])) { ok = false; break; }
+      if (!ok) continue;
+      if (L === 1 && !STUMBLE.has(t[k]) && !t[k].endsWith("-")) continue;
+      found.push({ start: k, len: L, why: L === 1 ? "Repeated word" : "Restarted the phrase" });
+      k += L - 1;
+      break;
+    }
+    if (t[k]?.endsWith("-") && t[k].length > 2 && !found.some((f) => k >= f.start && k < f.start + f.len)) found.push({ start: k, len: 1, why: "Half-finished word" });
+  }
+  return found;
+}
+
 export async function findFalseStarts(job) {
   const chunks = job.state.chunks || [];
   const out = [];
   chunks.forEach((c, i) => {
-    const t = toks(c.caption ?? c.text);
-    const seen = new Set();
-    const add = (start, len, why) => {
-      if (len < 1 || start < 0 || start + len >= t.length) return; // keep at least the restart
-      const key = `${start}:${len}`;
-      if (seen.has(key)) return;
-      if (out.some((o) => o.i === i && start < o.start + o.len && o.start < start + len)) return;
-      seen.add(key);
-      out.push({ i, start, len, cut: t.slice(start, start + len).join(" "), why });
+    const wt = wordToks(c), lists = { words: wt.map((x) => x.t), caption: toks(c.caption), text: toks(c.text) };
+    const order = ["words", "caption", "text"].filter((k) => lists[k].length);
+    const overlaps = (basis, start, len) => out.some((o) => o.i === i && o.basis === basis && start < o.start + o.len && o.start < start + len);
+    const add = (basis, start, len, why, extra = {}) => {
+      if (overlaps(basis, start, len)) return;
+      if (out.some((o) => o.i === i && o.cut === lists[basis].slice(start, start + len).join(" "))) return;
+      out.push({ i, basis, start, len, cut: lists[basis].slice(start, start + len).join(" "), why, ...extra });
     };
+    // 1) restarts the transcript check flagged
     for (const f of c.flags || []) {
-      if (f.kind !== "false-start" || !f.cut) continue;
+      if (f.kind !== "false-start") continue;
       const ct = toks(f.cut);
-      for (let k = 0; k + ct.length <= t.length; k++) if (ct.every((w, j) => w === t[k + j])) { add(k, ct.length, f.note || "Restarted here"); break; }
-    }
-    for (let k = 0; k < t.length; k++) {
-      for (let L = 5; L >= 1; L--) {
-        if (k + 2 * L > t.length) continue;
-        let ok = true;
-        for (let j = 0; j < L; j++) if (!same(t[k + j], t[k + L + j])) { ok = false; break; }
-        if (!ok) continue;
-        if (L === 1 && !STUMBLE.has(t[k]) && !t[k].endsWith("-")) continue;
-        add(k, L, L === 1 ? "Repeated word" : "Restarted the phrase");
-        break;
+      if (!ct.length) continue;
+      let placed = false;
+      for (const basis of order) {
+        const k = findIn(lists[basis], ct);
+        if (k >= 0) { add(basis, k, Math.min(ct.length, lists[basis].length - k), f.note || "Restarted here", { flagged: true }); placed = true; break; }
       }
-      if (t[k].endsWith("-") && t[k].length > 2 && !out.some((o) => o.i === i && k >= o.start && k < o.start + o.len)) add(k, 1, "Half-finished word");
+      if (!placed) out.push({ i, basis: null, start: 0, len: 0, cut: ct.join(" "), why: f.note || "Restarted here", flagged: true, unplaced: true });
     }
+    // 2) repeats in the words themselves (word timings first, then the caption)
+    const basis = order[0];
+    if (basis) for (const r of repeatsIn(lists[basis])) add(basis, r.start, r.len, r.why);
   });
   if (!out.length) return out;
   const { pcm } = await narration(job.id);
   for (const f of out) Object.assign(f, locate(pcm, chunks, f));
-  return out.filter((f) => f.b - f.a > 0.08).sort((x, y) => x.a - y.a);
+  return out.sort((x, y) => x.a - y.a);
 }
 
 // Where to cut: from the start of the abandoned words to the start of the restart.
 function locate(pcm, chunks, f) {
-  const c = chunks[f.i], t = toks(c.caption ?? c.text);
-  const prevEnd = f.i > 0 ? chunks[f.i - 1].end : 0;
-  // With word timings (AssemblyAI) the cut is exact, as long as the caption still matches the words.
-  if (c.words?.length) {
-    const tw = [];
-    c.words.forEach((w, wi) => toks(w.w).forEach(() => tw.push(wi)));
-    if (tw.length === t.length) {
-      const w0 = c.words[tw[f.start]], w1 = c.words[tw[f.start + f.len]];
-      const a = quietest(pcm, Math.max(prevEnd, w0.s - 0.12), w0.s + 0.02);
-      const b = quietest(pcm, Math.max(a + 0.05, w1.s - 0.15), w1.s);
-      return { a, b, approx: false };
-    }
+  const c = chunks[f.i], dur = pcm.length / SR;
+  const prevEnd = f.i > 0 ? chunks[f.i - 1].end : 0, nextStart = f.i + 1 < chunks.length ? chunks[f.i + 1].start : dur;
+  const MIN = 0.15;
+  if (f.basis === "words") {
+    const wt = wordToks(c);
+    const w0 = c.words[wt[f.start].wi];
+    const atEnd = f.start + f.len >= wt.length;
+    const w1 = atEnd ? null : c.words[wt[f.start + f.len].wi];
+    const a = quietest(pcm, Math.max(prevEnd, w0.s - 0.12), w0.s + 0.02);
+    const b = atEnd ? quietest(pcm, c.end, Math.min(nextStart, c.end + 0.3)) : quietest(pcm, Math.max(a + 0.05, w1.s - 0.15), w1.s + 0.01);
+    return { a, b: Math.max(b, a + 0.05), approx: false };
   }
-  // Otherwise estimate from the words' place in the line and snap to the nearest short pause.
-  const chars = (n) => t.slice(0, n).join(" ").length + (n ? 1 : 0);
+  // Estimated: place by the words' share of the line, then snap to a nearby short pause if there is one.
+  const t = f.basis ? toks(f.basis === "caption" ? c.caption : c.text) : [];
   const total = t.join(" ").length || 1;
-  const at = (n) => c.start + (chars(n) / total) * (c.end - c.start);
-  const pauses = shortPauses(pcm, c.start - 0.3, c.end);
-  const snap = (x, lo) => {
-    const p = pauses.filter((q) => q.mid > lo).sort((p1, p2) => Math.abs(p1.mid - x) - Math.abs(p2.mid - x))[0];
-    return p && Math.abs(p.mid - x) < 0.8 ? p.mid : x;
+  const frac = (n) => (n <= 0 ? 0 : (t.slice(0, n).join(" ").length + 1) / total);
+  const at = (n) => c.start + Math.min(1, frac(n)) * (c.end - c.start);
+  if (f.unplaced) {
+    const len = Math.min(1.2, Math.max(0.4, f.cut.length / 14));
+    return { a: c.start, b: Math.min(c.end, c.start + len), approx: true };
+  }
+  const pauses = shortPauses(pcm, c.start - 0.3, Math.min(nextStart, c.end + 0.3));
+  const snap = (x, lo, hi) => {
+    const p = pauses.filter((q) => q.mid > lo && q.mid < hi).sort((p1, p2) => Math.abs(p1.mid - x) - Math.abs(p2.mid - x))[0];
+    return p && Math.abs(p.mid - x) < 0.6 ? p.mid : x;
   };
-  const a = f.start === 0 ? quietest(pcm, Math.max(prevEnd, c.start - 0.25), c.start) : snap(at(f.start), c.start - 0.3);
-  const b = snap(at(f.start + f.len), a + 0.1);
+  const estA = at(f.start), estB = f.start + f.len >= t.length ? c.end + 0.05 : at(f.start + f.len);
+  const a = f.start === 0 ? quietest(pcm, Math.max(prevEnd, c.start - 0.25), c.start) : snap(estA, c.start - 0.3, estB - MIN);
+  let b = snap(estB, a + MIN, Math.min(nextStart, c.end + 0.3));
+  if (b - a < MIN) b = Math.max(estB, a + MIN);
   return { a, b, approx: true };
 }
 function shortPauses(pcm, t0, t1) {
@@ -291,29 +326,35 @@ export async function applyCuts(job, list, save) {
   const chunks = copyChunks(job);
   let out = pcm;
   const done = [];
+  const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/-$/, "-?");
   for (const f of [...list].sort((x, y) => y.a - x.a)) {
     const c = chunks[f.i], d = f.b - f.a;
+    if (!(d > 0.02)) continue;
     out = cutPcm(out, f.a, f.b);
-    const t = toks(c.caption ?? c.text);
-    const words = t.slice(f.start, f.start + f.len);
-    // Remove the abandoned words from the caption, math version and plain text.
-    const re = new RegExp(`(^|[^A-Za-z0-9'])${words.map((w) => w.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")).join("[^A-Za-z0-9']+")}[\\s,.;:\u2014\u2013-]*`, "i");
-    for (const k of ["caption", "text", "latex"]) if (typeof c[k] === "string") c[k] = c[k].replace(re, "$1").replace(/^\s*([a-z])/, (m, x) => (f.start === 0 ? x.toUpperCase() : m)).trim();
-    if (c.words?.length) {
-      const tw = [];
-      c.words.forEach((w, wi) => toks(w.w).forEach(() => tw.push(wi)));
-      if (tw.length === t.length) {
-        const w0 = tw[f.start], w1 = tw[f.start + f.len];
-        c.words.splice(w0, w1 - w0);
-        for (let k = w0; k < c.words.length; k++) { c.words[k].s -= d; c.words[k].e -= d; }
+    // Remove the abandoned words from the caption, math version and plain text, wherever they appear.
+    const words = f.cut.split(" ").filter(Boolean);
+    if (words.length) {
+      const re = new RegExp(`(^|[^A-Za-z0-9'])${words.map(esc).join("[^A-Za-z0-9']+")}[\\s,.;:\u2014\u2013-]*`, "i");
+      for (const k of ["caption", "text", "latex"]) {
+        if (typeof c[k] !== "string") continue;
+        const m = c[k].match(re);
+        if (!m) continue;
+        c[k] = (c[k].slice(0, m.index) + m[1] + c[k].slice(m.index + m[0].length)).replace(/\s{2,}/g, " ").trim();
+        if (m.index === 0) c[k] = c[k].replace(/^([a-z])/, (x) => x.toUpperCase());
       }
     }
-    if (f.start === 0) c.start = Math.max(f.a, c.start - d);
-    c.end -= d;
+    // Word timings: drop the words inside the cut, move the rest back.
+    if (c.words?.length) {
+      c.words = c.words.filter((w) => !(w.s >= f.a - 0.01 && w.s < f.b - 0.01));
+      for (const w of c.words) if (w.s >= f.b - 0.01) { w.s -= d; w.e -= d; }
+    }
+    if (f.a <= c.start + 0.01) c.start = f.a + 0.02;
+    c.end = Math.max(c.start + 0.2, c.end - Math.max(0, Math.min(d, c.end - f.a)));
     c.flags = (c.flags || []).filter((x) => !(x.kind === "false-start" && toks(x.cut).join(" ") === f.cut));
     shiftAfter(chunks, f.i, -d);
     done.push({ chunk: c.id, cut: f.cut, seconds: +d.toFixed(2) });
   }
+  if (!done.length) throw new Error("That cut is too short to make. Adjust its start and end, then try again.");
   await commit(job, file, out, chunks, { kind: "cut", cuts: done.reverse() }, save);
   return done;
 }

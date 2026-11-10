@@ -176,3 +176,5 @@ label.switch.big { margin-top: 0; }
 .pvpair { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
 .pvpair audio { height: 34px; }
 .card.clean h4 { margin: 20px 0 6px; }
+.fsrow .adj { display: block; margin-top: 4px; }
+.fsrow .adj input { width: 90px; display: inline-block; padding: 3px 6px; margin: 0 4px; }

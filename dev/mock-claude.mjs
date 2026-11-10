@@ -15,7 +15,11 @@ function replyFor(body) {
     const msg = body.messages.at(-1).content;
     const text = typeof msg === "string" ? msg : msg.map((m) => m.text || "").join("");
     const chunks = JSON.parse(text.slice(text.indexOf("<chunks>") + 8, text.indexOf("</chunks>")));
-    return JSON.stringify({ chunks: chunks.map((c) => ({ id: c.id, latex: c.text, flags: [] })) });
+    // MOCK_FLAGS=1: flag restarts the way Haiku does, including one whose words aren't in the caption.
+    const flagsFor = (t) => !process.env.MOCK_FLAGS ? []
+      : /^Picture/.test(t) ? [{ kind: "false-start", note: "Started the sentence, then began again", cut: "Picture a" }]
+      : /^So to recap/.test(t) ? [{ kind: "false-start", note: "Abandoned 'uh so to' before restarting", cut: "uh so to" }] : [];
+    return JSON.stringify({ chunks: chunks.map((c) => ({ id: c.id, latex: c.text, flags: flagsFor(c.text) })) });
   }
   if (tag === "frame-check") return JSON.stringify({ frames: [] });
   return "Hello from the mock Claude API.";

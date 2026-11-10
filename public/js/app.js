@@ -1043,16 +1043,29 @@ async function cleanupPanel(job, host) {
         const c = job.state.chunks[f.i];
         return `<div class="fsrow" data-k="${k}"><span class="t">${fmtT(f.a)}</span>
           <span class="txt">Cut <b>“${esc(f.cut)}”</b> from “${esc(String(c.caption ?? c.text).slice(0, 110))}${String(c.caption ?? c.text).length > 110 ? "…" : ""}”
-            <span class="small muted">${esc(f.why)} · ${(f.b - f.a).toFixed(1)} s${f.approx ? " · position estimated, listen first" : ""}</span>
+            <span class="small muted">${esc(f.why)} · <span class="len">${(f.b - f.a).toFixed(1)}</span> s${f.unplaced ? " · couldn't find these exact words, so the cut is a guess: listen and adjust it" : f.approx ? " · position estimated, listen first" : ""}</span>
+            <span class="adj small" ${f.unplaced ? "" : "hidden"}>Cut from <input type="number" step="0.05" min="0" data-ab="a" value="${f.a.toFixed(2)}" aria-label="Cut start in seconds">
+              to <input type="number" step="0.05" min="0" data-ab="b" value="${f.b.toFixed(2)}" aria-label="Cut end in seconds"> seconds into the recording</span>
             <span class="pv"></span></span>
-          <span class="btns"><button class="secondary small-btn" data-act="listen">Listen</button><button class="small-btn" data-act="cut">Cut</button><button class="link" data-act="keep">Keep</button></span></div>`;
+          <span class="btns"><button class="secondary small-btn" data-act="listen">Listen</button><button class="small-btn" data-act="cut">Cut</button>
+            <button class="link" data-act="adjust">Adjust</button><button class="link" data-act="keep">Keep</button></span></div>`;
       }).join("")}</div>
       ${list.length > 1 ? `<div class="actions"><button class="secondary" id="cutall">Cut all ${list.length}</button></div>` : ""}`
     : `<p class="small muted">No false starts found${cuts.length ? " (any more)" : ""}.</p>`}
     ${cuts.length ? `<p class="small">Cut so far: ${cuts.map((c) => `“${esc(c.cut)}”`).join(", ")}. <button class="link" id="undocuts">Undo all edits</button></p>` : ""}`;
   fsBox.querySelectorAll(".fsrow").forEach((row) => {
     const f = list[Number(row.dataset.k)];
+    row.querySelector('[data-act="adjust"]').onclick = () => { const a = row.querySelector(".adj"); a.hidden = !a.hidden; };
+    row.querySelectorAll("[data-ab]").forEach((inp) => (inp.oninput = () => {
+      const v = Number(inp.value);
+      if (!isFinite(v)) return;
+      f[inp.dataset.ab] = v;
+      row.querySelector(".len").textContent = Math.max(0, f.b - f.a).toFixed(2);
+      row.querySelector(".pv").innerHTML = "";
+      row.querySelector('[data-act="listen"]').disabled = false;
+    }));
     row.querySelector('[data-act="listen"]').onclick = async (ev) => {
+      if (!(f.b - f.a > 0.02)) { showErr(fsm, new Error("The end of the cut has to come after its start.")); return; }
       ev.target.disabled = true;
       try {
         const { before, after } = await P.cutPreview(job, f);
