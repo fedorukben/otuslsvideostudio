@@ -45,6 +45,16 @@ Admins choose under **Settings → Transcription**:
 - **In-browser Whisper** (default): free, private, but downloads a ~250 MB model the first time and times slides from pauses in the audio.
 - **AssemblyAI**: metered per hour of audio (Universal-3.5 Pro $0.21/hr plus $0.05/hr for key terms, editable in Settings). It returns a time for every word, so slides and captions line up exactly. Words from the video's title, script, tipsheet and notes are sent as key terms to improve recognition. Add an AssemblyAI key under **API keys** first. Transcription costs show on the Usage page as the `transcribe` stage, count toward the caps, and appear in the live cost.
 
+## Approval
+
+**Settings → Approval** decides whether an admin must approve a video before it can spend anything:
+
+- **No approval needed** (default).
+- **Approval when the estimate is over $X**: the site estimates each video's cost from the narration length (about $0.45 plus $0.04 a minute, plus transcription if AssemblyAI is on).
+- **Every video needs approval.**
+
+Waiting videos appear under **Approvals** (with a count in the menu). An admin approves with a budget for that video (suggested at 1.5 times the estimate; blank means no per-video limit) or declines with a note the person sees. The server blocks every Claude and AssemblyAI call for a video that is waiting, declined, or over its approved budget, and budgets can be raised afterwards. Admins' own videos are approved automatically.
+
 ## Using it
 
 - Use **Chrome or Edge** on a laptop or desktop. Keep the tab open while it's working.

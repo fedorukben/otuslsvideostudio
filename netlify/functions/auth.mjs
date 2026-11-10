@@ -10,7 +10,7 @@ export default async (req) => {
     if (action === "status" && req.method === "GET") {
       const { blobs } = await users().list();
       const u = await currentUser(req);
-      return json({ needsSetup: blobs.length === 0, user: u ? publicUser(u) : null });
+      return json({ needsSetup: blobs.length === 0, user: u ? { ...publicUser(u), mustChangePassword: !!u.mustChangePassword } : null });
     }
 
     if (action === "setup" && req.method === "POST") {

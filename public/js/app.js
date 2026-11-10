@@ -18,11 +18,24 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const money = (n, d = 2) => (n == null ? "—" : "$" + Number(n).toFixed(n > 0 && n < 0.01 ? 4 : d));
 const when = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—");
 const fmtT = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-const STATUS_TEXT = { new: "Uploaded", analysing: "Transcribing", "review-transcript": "Check transcript", planning: "Planning slides",
+const STATUS_TEXT = { "awaiting-approval": "Awaiting approval", new: "Uploaded", analysing: "Transcribing", "review-transcript": "Check transcript", planning: "Planning slides",
   "review-slides": "Review slides", rendering: "Rendering", done: "Done", failed: "Needs attention" };
 const statusTag = (s) => `<span class="status ${esc(s)}">${esc(STATUS_TEXT[s] || s)}</span>`;
 const loader = `<span class="loader" aria-hidden="true"><span></span><span></span><span></span></span>`;
 const loading = (text = "Loading") => `<div class="loading" role="status">${loader}<span>${esc(text)}…</span></div>`;
+// Length of an audio file in seconds (0 if the browser can't tell quickly).
+function audioDuration(file) {
+  return new Promise((res) => {
+    const a = new Audio();
+    const url = URL.createObjectURL(file);
+    const done = (d) => { URL.revokeObjectURL(url); res(Number.isFinite(d) ? d : 0); };
+    a.preload = "metadata";
+    a.onloadedmetadata = () => done(a.duration);
+    a.onerror = () => done(0);
+    setTimeout(() => done(0), 8000);
+    a.src = url;
+  });
+}
 function form(el) { return Object.fromEntries(new FormData(el).entries()); }
 function showErr(where, e) { where.innerHTML = `<div class="err">${esc(e.message || e)}</div>`; }
 
@@ -62,11 +75,12 @@ function navHtml() {
   const h = location.hash || "#/videos";
   const a = (href, label) => `<a href="${href}" class="${h.startsWith(href) ? "on" : ""}">${label}</a>`;
   return a("#/videos", "My videos") + a("#/new", "New video") +
-    (me.role === "admin" ? `<span class="sep"></span>${a("#/admin/usage", "Usage")}${a("#/admin/users", "Users")}${a("#/admin/keys", "API keys")}${a("#/admin/settings", "Settings")}` : "") +
+    (me.role === "admin" ? `<span class="sep"></span>${a("#/admin/approvals", `Approvals<span class="badge" id="apcount" hidden></span>`)}${a("#/admin/usage", "Usage")}${a("#/admin/users", "Users")}${a("#/admin/keys", "API keys")}${a("#/admin/settings", "Settings")}` : "") +
     `<span class="sep"></span>${a("#/account", esc(me.name || me.email))}<button id="signout">Sign out</button>`;
 }
 function route() {
   $nav.innerHTML = navHtml();
+  if (me.role === "admin") refreshApprovalCount();
   document.getElementById("signout").onclick = async () => { await api("POST", "/api/auth/logout", {}); location.hash = ""; location.reload(); };
   const h = (location.hash || "#/videos").slice(1);
   const [, a, b] = h.split("/");
@@ -75,6 +89,7 @@ function route() {
   if (a === "job") return jobView(b);
   if (a === "account") return passwordView(false);
   if (a === "admin" && me.role === "admin") {
+    if (b === "approvals") return approvalsView();
     if (b === "usage") return usageView();
     if (b === "users") return usersView();
     if (b === "keys") return keysView();
@@ -175,13 +190,14 @@ function newView() {
       if (audio.size > 300 * 1024 * 1024) throw new Error("That audio file is very large (over 300 MB).");
       const tipsheet = tip && tip.size ? (await tip.text()).slice(0, 60000) : "";
       ev.target.querySelector("button").disabled = true;
-      const { job } = await api("POST", "/api/jobs", {
+      const durationSec = await audioDuration(audio);
+      const { job } = await api("POST", "/api/jobs", { durationSec,
         title: fd.get("title"), eyebrow: fd.get("eyebrow"), subtitle: fd.get("subtitle"), stream: fd.get("stream"),
         script: fd.get("script"), notes: fd.get("notes"), tipsheet, audioName: audio.name,
       });
       await putFile(`audio:${job.id}`, audio);
       location.hash = `#/job/${job.id}`;
-      startStage(job, "analyse");
+      if (job.status !== "awaiting-approval") startStage(job, "analyse");
     } catch (e) { ev.target.querySelector("button").disabled = false; showErr(m, e); }
   };
 }
@@ -332,7 +348,7 @@ async function jobView(id, keepScroll) {
   const hasAudio = !!(await getFile(`audio:${id}`));
   $app.innerHTML = `<div class="eyebrow">${job.stream === "cp" ? "Coding and Programming" : "Mathematics"} · ${esc(job.eyebrow || "")}</div>
     <h1>${esc(job.title)}</h1>
-    <p class="muted small">${statusTag(job.status)} &nbsp; Created ${when(job.createdAt)}${showCost ? ` · Claude cost so far <b id="jobcost">${money(r ? r.cost : job.costUsd)}</b> (<span id="jobcalls">${r ? r.calls : job.calls || 0}</span> calls)` : ""}</p>
+    <p class="muted small">${statusTag(job.status)} &nbsp; Created ${when(job.createdAt)}${showCost ? ` · Claude cost so far <b id="jobcost">${money(r ? r.cost : job.costUsd)}</b> (<span id="jobcalls">${r ? r.calls : job.calls || 0}</span> calls)` : ""}${job.approval?.required && job.approval.status === "approved" && job.approval.limitUsd != null ? ` · Approved budget <b>${money(job.approval.limitUsd)}</b>` : ""}</p>
     <div class="steps">${FLOW.map(([s, l], i) => `<div class="${i < nowIdx || job.status === "done" ? "done" : i === nowIdx ? "now" : ""}">${i + 1}. ${l}</div>`).join("")}</div>
     ${job._error ? `<div class="err"><b>Something went wrong:</b> ${esc(job._error)}</div>` : ""}
     ${(job._warnings || []).map((w) => `<div class="warn">${esc(w)}</div>`).join("")}
@@ -355,6 +371,12 @@ async function jobView(id, keepScroll) {
       <div class="actions"><button id="go">${label}</button></div></div>`;
     document.getElementById("go").onclick = () => { job._error = null; startStage(job, stage); jobView(id); };
   };
+  if (job.status === "awaiting-approval") return awaitingView(job, st);
+  if (job.approval?.status === "declined") {
+    st.innerHTML = `<div class="card"><h3>An admin declined this video</h3><p>${esc(job.approval.note || "No reason was given.")}</p>
+      <p class="muted small">Declined by ${esc(job.approval.decidedBy)} on ${when(job.approval.decidedAt)}. Nothing was charged for it.</p></div>`;
+    return;
+  }
   if (job.status === "new" || job.status === "analysing") resume("Transcribe the audio", "analyse", job.status === "new" && !job._error ? "Ready to transcribe your narration." : "");
   else if (job.status === "review-transcript") transcriptReview(job, st);
   else if (job.status === "planning") resume("Plan the slides", "plan");
@@ -365,6 +387,27 @@ async function jobView(id, keepScroll) {
   if (keepScroll) window.scrollTo(0, y);
 }
 const jobCache = new Map();
+
+// ----- waiting for approval -----
+let approvalPoll = null;
+function awaitingView(job, st) {
+  const a = job.approval || {};
+  st.innerHTML = `<div class="card"><div class="eyebrow">Waiting for approval</div>
+    <div class="runhead">${loader}<h3>An admin needs to approve this video before it starts</h3></div>
+    <p>Estimated cost: <b>${money(a.estimateUsd)}</b>${job.durationSec ? ` for ${Math.round(job.durationSec / 60 * 10) / 10} minutes of narration` : ""}.
+    Nothing is charged until it's approved. Your audio is saved in this browser, so you can close this page and come back.</p>
+    <p class="muted small">Requested ${when(a.requestedAt)}. This page checks for a decision every 20 seconds.</p>
+    <div class="actions"><button class="secondary" id="recheck">Check now</button></div></div>`;
+  document.getElementById("recheck").onclick = () => jobView(job.id);
+  clearInterval(approvalPoll);
+  approvalPoll = setInterval(async () => {
+    if (openJobId() !== job.id) return clearInterval(approvalPoll);
+    try {
+      const { job: j } = await api("GET", `/api/jobs/${job.id}`);
+      if (j.status !== "awaiting-approval") { clearInterval(approvalPoll); jobView(job.id); }
+    } catch {}
+  }, 20000);
+}
 
 // ----- Checkpoint A -----
 async function transcriptReview(job, st) {
@@ -493,6 +536,60 @@ async function doneView(job, st) {
     <p class="muted small">Download your files now: the finished video is kept only in this browser. Remember brand@ontariotechu.ca asks to be contacted before the Ontario Tech name or logo is used in a project.</p>`;
   document.getElementById("rerender").onclick = () => { job._error = null; startStage(job, "render"); jobView(job.id); };
   document.getElementById("back").onclick = async () => { await api("PATCH", `/api/jobs/${job.id}`, { status: "review-slides" }); jobView(job.id); };
+}
+
+// ---------------- admin: approvals ----------------
+async function refreshApprovalCount() {
+  try {
+    const { pending } = await api("GET", "/api/admin/approvals");
+    const b = document.getElementById("apcount");
+    if (b) { b.textContent = pending.length; b.hidden = !pending.length; }
+  } catch {}
+}
+async function approvalsView() {
+  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>Approvals</h1><div id="ap">${loading("Loading requests")}</div>`;
+  const [{ pending, recent }, { settings: s }] = await Promise.all([api("GET", "/api/admin/approvals"), api("GET", "/api/admin/settings")]);
+  const mode = { none: "Approval is off — videos start straight away.", threshold: `Videos estimated over ${money(s.approvalThresholdUsd)} need approval.`,
+    always: "Every video needs approval." }[s.approvalMode || "none"];
+  const mins = (j) => (j.durationSec ? `${(j.durationSec / 60).toFixed(1)} min` : "—");
+  const suggest = (j) => Math.ceil((j.approval.estimateUsd || 0.5) * 1.5 * 100) / 100;
+  document.getElementById("ap").outerHTML = `
+    <p class="muted">${mode} <a href="#/admin/settings">Change in Settings</a>. Admins' own videos are approved automatically.</p>
+    <h2>Waiting (${pending.length})</h2>
+    ${pending.length ? `<table><thead><tr><th>Video</th><th>Person</th><th>Length</th><th class="num">Estimate</th><th>Budget for this video</th><th>Note <span class="muted">(optional)</span></th><th></th></tr></thead><tbody>
+    ${pending.map((j) => `<tr data-id="${esc(j.id)}"><td><b>${esc(j.title)}</b><br><span class="small muted">${when(j.approval.requestedAt)}</span></td>
+      <td>${esc(j.ownerName || j.owner)}<br><span class="small muted">${esc(j.owner)}</span></td><td>${mins(j)}</td><td class="num">${money(j.approval.estimateUsd)}</td>
+      <td><input data-k="limit" type="number" min="0.01" step="0.05" value="${suggest(j)}" aria-label="Budget in dollars" style="width:110px">
+        <div class="small muted">blank = no limit</div></td>
+      <td><input data-k="note" maxlength="500" placeholder="e.g. Keep it under 5 minutes"></td>
+      <td style="white-space:nowrap"><button data-act="approve">Approve</button> <button class="danger" data-act="decline">Decline</button></td></tr>`).join("")}</tbody></table>`
+      : `<div class="card muted">Nothing is waiting for approval.</div>`}
+    <div id="m"></div>
+    <h2>Recent decisions</h2>
+    ${recent.length ? `<table><thead><tr><th>Video</th><th>Person</th><th>Decision</th><th class="num">Estimate</th><th class="num">Spent</th><th>Budget</th><th>By</th></tr></thead><tbody>
+    ${recent.map((j) => `<tr data-id="${esc(j.id)}"><td>${esc(j.title)}</td><td>${esc(j.ownerName || j.owner)}</td>
+      <td>${j.approval.status === "approved" ? '<span class="status done">Approved</span>' : '<span class="status failed">Declined</span>'}${j.approval.note ? `<br><span class="small muted">${esc(j.approval.note)}</span>` : ""}</td>
+      <td class="num">${money(j.approval.estimateUsd)}</td><td class="num">${money(j.costUsd)}</td>
+      <td>${j.approval.status === "approved" ? `<input data-k="limit" type="number" min="0.01" step="0.05" value="${j.approval.limitUsd ?? ""}" placeholder="none" style="width:90px"> <button class="secondary" data-act="budget">Set</button>` : "—"}</td>
+      <td class="small">${esc(j.approval.decidedBy || "")}<br>${when(j.approval.decidedAt)}</td></tr>`).join("")}</tbody></table>`
+      : `<div class="card muted">No decisions yet.</div>`}`;
+  const m = document.getElementById("m");
+  $app.querySelectorAll("tr[data-id]").forEach((tr) => {
+    const id = tr.dataset.id;
+    const val = (k) => tr.querySelector(`[data-k="${k}"]`)?.value ?? "";
+    const send = async (decision) => {
+      try {
+        await api("POST", `/api/admin/approvals/${encodeURIComponent(id)}`, { decision, limitUsd: val("limit"), note: val("note") });
+        approvalsView(); refreshApprovalCount();
+      } catch (e) { showErr(m, e); }
+    };
+    tr.querySelector('[data-act="approve"]')?.addEventListener("click", () => send("approve"));
+    tr.querySelector('[data-act="decline"]')?.addEventListener("click", () => {
+      if (!val("note") && !confirm("Decline without a note? The person will see that it was declined.")) return;
+      send("decline");
+    });
+    tr.querySelector('[data-act="budget"]')?.addEventListener("click", () => send("budget"));
+  });
 }
 
 // ---------------- admin: usage ----------------
@@ -633,6 +730,13 @@ async function settingsView() {
     </div>
     <label class="switch"><input type="checkbox" name="showCost" ${s.showCost !== false ? "checked" : ""}>
       <span>Show costs while making videos <span class="muted">(a live $ total as each Claude step finishes, plus the cost on each video. Admins always see costs on the Usage page.)</span></span></label><p class="small muted">When a cap is reached, new Claude calls are blocked until next month or until you raise it. A call already running finishes.</p></div>
+    <div class="card"><h3>Approval</h3>
+      <p class="small muted">Whether an admin has to approve a video before it can spend anything. The estimate is rough: about $0.45 plus $0.04 per minute of narration, plus transcription if AssemblyAI is chosen. Admins' own videos are approved automatically.</p>
+      <label class="switch"><input type="radio" name="approvalMode" value="none" ${(s.approvalMode || "none") === "none" ? "checked" : ""}><span>No approval needed</span></label>
+      <label class="switch"><input type="radio" name="approvalMode" value="threshold" ${s.approvalMode === "threshold" ? "checked" : ""}>
+        <span>Approval when the estimate is over <input name="approvalThresholdUsd" type="number" min="0" step="0.05" value="${s.approvalThresholdUsd ?? 1}" style="width:100px;display:inline-block;margin:0 6px" aria-label="Approval threshold in dollars"> USD</span></label>
+      <label class="switch"><input type="radio" name="approvalMode" value="always" ${s.approvalMode === "always" ? "checked" : ""}><span>Every video needs approval</span></label>
+    </div>
     <div class="card"><h3>Models for each stage</h3><div class="grid g2">
       ${stages.map(([k, l]) => `<label>${l}<input name="stage:${k}" value="${esc(s.stageModels[k])}"></label>`).join("")}</div>
     </div>
@@ -674,7 +778,8 @@ async function settingsView() {
     try {
       const body = { monthlyCapUsd: f.monthlyCapUsd, defaultUserMonthlyLimitUsd: f.defaultUserMonthlyLimitUsd,
         defaultUserMonthlyVideoLimit: f.defaultUserMonthlyVideoLimit, asrModel: f.asrModel, stageModels: {}, prices: JSON.parse(f.prices),
-        showCost: f.showCost === "on", asrProvider: f.asrProvider, transcriptionPrices: JSON.parse(f.transcriptionPrices) };
+        showCost: f.showCost === "on", asrProvider: f.asrProvider, transcriptionPrices: JSON.parse(f.transcriptionPrices),
+        approvalMode: f.approvalMode, approvalThresholdUsd: f.approvalThresholdUsd };
       for (const [k] of stages) body.stageModels[k] = f[`stage:${k}`];
       await api("PUT", "/api/admin/settings", body);
       m.innerHTML = `<div class="okmsg">Settings saved.</div>`;

@@ -42,7 +42,7 @@ main { max-width: 1180px; margin: 0 auto; padding: 24px 24px 80px; }
 label { display: block; font-weight: 500; margin: 12px 0 4px; }
 label .muted { font-weight: 400; }
 input, select, textarea { width: 100%; font: inherit; padding: 9px 10px; border: 1px solid #AEB8C2; background: #fff; color: var(--ink); }
-input[type=checkbox] { width: auto; }
+input[type=checkbox], input[type=radio] { width: auto; flex: none; }
 textarea { min-height: 70px; resize: vertical; }
 input:focus, select:focus, textarea:focus, button:focus-visible { outline: 3px solid rgba(0,119,202,.35); outline-offset: 1px; border-color: var(--blue); }
 .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
@@ -138,3 +138,9 @@ label.switch input { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .livecost.bump b { animation: none; } }
 
 .livecost b.tick { font-variant-numeric: tabular-nums; display: inline-block; min-width: 7ch; }
+
+/* approvals */
+.status.awaiting-approval { color: var(--tan); }
+nav .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; background: var(--tan); color: #fff; font: 500 12px/18px "Ubuntu"; text-align: center; }
+label.switch > span { flex: 1; font-weight: 400; }
+label.switch > span > input[type=number] { padding: 4px 8px; }

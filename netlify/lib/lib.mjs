@@ -133,6 +133,9 @@ export const DEFAULT_SETTINGS = {
   asrProvider: "browser",
   assemblyaiModels: ["universal-3-5-pro", "universal-2"], // priority list sent as speech_models
   showCost: true, // show $ on video pages, including a live total while a video is being made
+  // Admin approval before a video can spend anything: "none", "threshold" (estimate over approvalThresholdUsd) or "always".
+  approvalMode: "none",
+  approvalThresholdUsd: 1,
   stageModels: {
     "math-pass": "claude-haiku-5-5",
     "plan": "claude-opus-5-5",
@@ -215,4 +218,30 @@ export async function checkSpend(user) {
 }
 
 export const newId = () => crypto.randomBytes(9).toString("base64url");
+
+// Rough cost of one video before it's made: slide planning (Opus) dominates; longer narration
+// means bigger prompts and more slides. Transcription is added if AssemblyAI is chosen.
+export function estimateVideoCost(s, durationSec) {
+  const min = Math.max(0.5, (Number(durationSec) || 300) / 60);
+  let usd = 0.35 + 0.035 * min        // slide planning (Opus)
+    + 0.10                            // automatic fixes and one round of review comments (Sonnet)
+    + 0.004 * min + 0.01;             // math pass and final frame check (Haiku)
+  if (s.asrProvider === "assemblyai") {
+    const tp = s.transcriptionPrices || {};
+    usd += (min / 60) * ((tp.perHour?.["universal-3-5-pro"] ?? 0.21) + (tp.keytermsPerHour ?? 0.05));
+  }
+  return Math.ceil(usd * 100) / 100;
+}
+
+// Blocks spending on a video that is waiting for approval, was declined, or used its approved budget.
+export function approvalBlock(job) {
+  const a = job.approval;
+  if (!a?.required) return null;
+  if (a.status === "pending") return "This video is waiting for an admin to approve it.";
+  if (a.status === "declined") return `An admin declined this video${a.note ? `: ${a.note}` : "."}`;
+  if (a.limitUsd != null && (job.costUsd || 0) >= a.limitUsd) {
+    return `This video has used its approved budget of $${Number(a.limitUsd).toFixed(2)}. Ask an admin to raise it.`;
+  }
+  return null;
+}
 export const nowIso = () => new Date().toISOString();

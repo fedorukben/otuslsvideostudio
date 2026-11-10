@@ -1,7 +1,7 @@
 // /api/admin/* — users, API keys, settings, metering. Admin role only.
 import {
   users, json, bad, body, requireUser, publicUser, emailKey, hashPassword, validPassword, nowIso,
-  getSettings, saveSettings, encrypt, newId, usageForMonth, jobsForMonth, monthOf, PROVIDERS,
+  getSettings, saveSettings, encrypt, newId, usageForMonth, jobsForMonth, monthOf, PROVIDERS, jobsStore,
 } from "../lib/lib.mjs";
 
 export default async (req) => {
@@ -98,6 +98,41 @@ export default async (req) => {
       }
     }
 
+    // ----- approvals -----
+    if (area === "approvals") {
+      const st = jobsStore();
+      if (req.method === "GET") {
+        const { blobs } = await st.list();
+        const all = (await Promise.all(blobs.map((b) => st.get(b.key, { type: "json" })))).filter((j) => j && !j.deleted && j.approval?.required);
+        const view = ({ state, ...j }) => j;
+        return json({
+          pending: all.filter((j) => j.approval.status === "pending").sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(view),
+          recent: all.filter((j) => j.approval.status !== "pending").sort((a, b) => (b.approval.decidedAt || "").localeCompare(a.approval.decidedAt || "")).slice(0, 25).map(view),
+        });
+      }
+      if (req.method === "POST" && id) {
+        const job = await st.get(id, { type: "json" });
+        if (!job?.approval?.required) return bad("That video doesn't need approval", 404);
+        const b = await body(req);
+        if (b.decision === "approve") {
+          const lim = b.limitUsd === "" || b.limitUsd == null ? null : Number(b.limitUsd);
+          if (lim != null && !(lim > 0)) return bad("Budget must be a positive amount, or blank for no per-video limit");
+          job.approval = { ...job.approval, status: "approved", limitUsd: lim, decidedBy: admin.email, decidedAt: nowIso(), note: String(b.note || "").slice(0, 500) };
+          if (job.status === "awaiting-approval" || job.status === "failed") job.status = "new";
+        } else if (b.decision === "decline") {
+          job.approval = { ...job.approval, status: "declined", decidedBy: admin.email, decidedAt: nowIso(), note: String(b.note || "").slice(0, 500) };
+          job.status = "failed";
+        } else if (b.decision === "budget") {
+          const lim = Number(b.limitUsd);
+          if (!(lim > 0)) return bad("Enter a positive budget");
+          job.approval = { ...job.approval, limitUsd: lim, decidedBy: admin.email, decidedAt: nowIso() };
+        } else return bad("decision must be approve, decline or budget");
+        job.updatedAt = nowIso();
+        await st.setJSON(id, job);
+        return json({ ok: true });
+      }
+    }
+
     // ----- settings -----
     if (area === "settings") {
       const s = await getSettings();
@@ -117,6 +152,12 @@ export default async (req) => {
           s.transcriptionPrices = tp;
         }
         if (typeof b.showCost === "boolean") s.showCost = b.showCost;
+        if (["none", "threshold", "always"].includes(b.approvalMode)) s.approvalMode = b.approvalMode;
+        if (b.approvalThresholdUsd !== undefined) {
+          const t = num(b.approvalThresholdUsd);
+          if (t == null || t < 0) return bad("Approval threshold must be a dollar amount");
+          s.approvalThresholdUsd = t;
+        }
         if (b.stageModels && typeof b.stageModels === "object") s.stageModels = { ...s.stageModels, ...b.stageModels };
         if (b.prices && typeof b.prices === "object") {
           for (const [m, p] of Object.entries(b.prices)) {

@@ -2,7 +2,7 @@
 // The browser never sees the API key. It queues a request here; a background
 // function makes the call (up to 15 minutes), records usage and stores the reply.
 import {
-  reqStore, jobsStore, json, bad, body, requireUser, getSettings, checkSpend, newId, nowIso, internalToken, activeKey,
+  reqStore, jobsStore, json, bad, body, requireUser, getSettings, checkSpend, newId, nowIso, internalToken, activeKey, approvalBlock,
 } from "../lib/lib.mjs";
 import { runRequest } from "../lib/claude-run.mjs";
 
@@ -18,6 +18,8 @@ export default async (req, context) => {
       if (!STAGES.includes(b.stage)) return bad("Unknown stage");
       const job = await jobsStore().get(String(b.jobId || ""), { type: "json" });
       if (!job || job.owner !== user.email) return bad("Video not found", 404);
+      const blocked = approvalBlock(job);
+      if (blocked) return bad(blocked, 403);
       const capMsg = await checkSpend(user);
       if (capMsg) return bad(capMsg, 429);
       const s = await getSettings();

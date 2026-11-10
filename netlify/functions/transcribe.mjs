@@ -2,7 +2,7 @@
 // The browser uploads the recording in small parts (Netlify limits request size),
 // then a background function sends it to AssemblyAI and records the cost.
 import {
-  reqStore, jobsStore, json, bad, body, requireUser, getSettings, checkSpend, newId, nowIso, internalToken, activeKey,
+  reqStore, jobsStore, json, bad, body, requireUser, getSettings, checkSpend, newId, nowIso, internalToken, activeKey, approvalBlock,
 } from "../lib/lib.mjs";
 import { partsStore, runTranscription } from "../lib/transcribe-run.mjs";
 
@@ -18,6 +18,8 @@ export default async (req) => {
       const b = await body(req);
       const job = await jobsStore().get(String(b.jobId || ""), { type: "json" });
       if (!job || job.owner !== user.email) return bad("Video not found", 404);
+      const blocked = approvalBlock(job);
+      if (blocked) return bad(blocked, 403);
       const s = await getSettings();
       if (!activeKey(s, "assemblyai")) return bad("No AssemblyAI key has been set up. Ask an admin to add one.", 503);
       const capMsg = await checkSpend(user);
