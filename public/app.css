@@ -169,3 +169,10 @@ details.script h4 { margin: 14px 0 4px; font-size: 15px; }
 details.script p { margin: 4px 0; }
 input[type=range] { width: 100%; padding: 0; }
 label.switch.big { margin-top: 0; }
+.fsrow { display: grid; grid-template-columns: 48px 1fr auto; gap: 10px; align-items: start; padding: 8px 10px; border-bottom: 1px solid #EEF2F6; }
+.fsrow .t { font-size: 13px; color: #5B6770; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.fsrow .txt .small { display: block; }
+.fsrow .btns { display: flex; gap: 8px; align-items: center; }
+.pvpair { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+.pvpair audio { height: 34px; }
+.card.clean h4 { margin: 20px 0 6px; }

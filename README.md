@@ -55,6 +55,19 @@ Admins choose under **Settings → Transcription**:
 
 Waiting videos appear under **Approvals** (with a count in the menu). An admin approves with a budget for that video (suggested at 1.5 times the estimate; blank means no per-video limit) or declines with a note the person sees. The server blocks every Claude and AssemblyAI call for a video that is waiting, declined, or over its approved budget, and budgets can be raised afterwards. Admins' own videos are approved automatically.
 
+## Audio clean-up and AI voice
+
+Every video page from Checkpoint A on has an **Audio** card:
+
+- **Enhance audio** (on by default; set per video, also on New video). When the video is rendered, the narration goes through noise reduction, a hum notch, a gentle voice EQ, a de-esser and light compression before the usual loudness normalisation. **Compare before and after** plays the same 12 seconds both ways.
+- **False starts.** The site finds places where the narrator stopped and restarted ("look at the, look at the right hand end…"): repeated phrases, repeated small words, half words, and restarts the transcript check (Haiku) flags. Each one has **Listen** (now vs. with the cut), **Cut** and **Keep**, plus **Cut all**. A cut removes only that audio, at the quietest point, and the captions and timings follow. With AssemblyAI word timings the cut is exact; with in-browser Whisper the position is estimated from pauses, so listen first. This works without ElevenLabs.
+
+**AI voice (optional, per person).** On the **Voice** page each person can turn on an ElevenLabs Instant Voice Clone of their own voice. It's off until they turn it on. They read the built-in sample script (about 4 minutes, same mic and room as their narrations), upload it, and confirm consent. The sample goes to ElevenLabs once and isn't kept on the site. Then a **Fix a line with your AI voice** panel appears on their videos: pick a line, type what it should say, hear three takes (about a cent each), and choose one. The take is level-matched and spliced in at the pauses around the line, and later timings shift to fit. They can change stability, similarity, style and speed, try a sentence, replace the sample, or delete the voice (which removes it at ElevenLabs).
+
+All edits (cuts and AI-voice fixes) are made in the browser. The original recording is kept, so **Undo all edits** puts everything back. Editing after a render shows a reminder to render again.
+
+**Admin set-up.** Add an ElevenLabs key under **API keys** with only two permissions: **Text to Speech: Access** and **Voices: Write**. Leave everything else off and don't restrict it by IP (Netlify functions don't have fixed addresses). **Settings → Voice patching** has an on/off switch for the whole site, the model (Multilingual v2 by default) and prices per 1,000 characters. Voice usage appears on the Usage page by characters. Deleting a user deletes their voice.
+
 ## Using it
 
 - Use **Chrome or Edge** on a laptop or desktop. Keep the tab open while it's working.

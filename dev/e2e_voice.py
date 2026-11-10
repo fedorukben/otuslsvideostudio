@@ -4,7 +4,7 @@ from playwright.sync_api import sync_playwright
 BASE = "http://localhost:8888"
 MOCK = """
 window.__SVS_MOCK_ASR = (async () => {
-  const words = ["Okay so today we count walls", "Picture a wall two units tall and n units long", "Look at the right hand end of the wall",
+  const words = ["Okay so today we count walls", "Picture a wall two units tall and n units long", "Look at the, look at the right hand end of the wall",
     "So every wall of length n is one of these plus the walls with two flat dominoes", "Let's find a three and then a four and a five",
     "A common mistake is to write a n equals a n minus one plus one", "So to recap here are three steps"];
   let i = 0;
@@ -77,12 +77,27 @@ with sync_playwright() as p:
     pg.wait_for_selector(".pill:has-text('AI voice')", timeout=60000)
     after = pg.evaluate(AUDIO_INFO, jid)
     print("audio before:", before, "\naudio after:", after)
-    assert after["orig"] and after["name"].endswith("-patched.wav") and after["dur"] > before["dur"] + 2, "patched audio should be longer"
+    assert after["orig"] and after["name"].endswith("-edited.wav") and after["dur"] > before["dur"] + 2, "patched audio should be longer"
     caps = pg.eval_on_selector_all(".chunk textarea[data-k=caption]", "els => els.map(e => e.value)")
     assert "very common slip" in caps[5], caps[5]
     times = pg.locator(".chunk .t").all_inner_texts()
     print("chunk times after patch:", times)
     pg.screenshot(path=f"{shots}/voice_07_patched.png", full_page=True)
+    # false starts: found, previewed, cut
+    pg.wait_for_selector(".fsrow", timeout=30000)
+    print("false starts:", pg.locator(".fsrow .txt").all_inner_texts())
+    pg.click(".fsrow [data-act=listen]"); pg.wait_for_selector(".fsrow .pv audio")
+    pg.click("#enhpv"); pg.wait_for_selector("#enhout audio", timeout=120000)
+    pg.locator(".card.clean").scroll_into_view_if_needed()
+    pg.screenshot(path=f"{shots}/voice_07b_clean.png", full_page=True)
+    pre = pg.evaluate(AUDIO_INFO, jid)
+    pg.click(".fsrow [data-act=cut]")
+    pg.wait_for_selector("text=Cut so far", timeout=30000)
+    post = pg.evaluate(AUDIO_INFO, jid)
+    caps = pg.eval_on_selector_all(".chunk textarea[data-k=caption]", "els => els.map(e => e.value)")
+    print("after cut:", post["dur"], "was", pre["dur"], "| caption:", caps[2])
+    assert post["dur"] < pre["dur"] - 0.2 and caps[2].lower().startswith("look at the right"), caps[2]
+    pg.screenshot(path=f"{shots}/voice_07c_cut.png", full_page=True)
     pg.click("text=Approve and plan slides")
     pg.wait_for_selector(".thumb img", timeout=120000)
     pg.click("text=Approve and render")
@@ -102,6 +117,7 @@ with sync_playwright() as p:
     pg.wait_for_selector("text=since this video was rendered", timeout=30000)
     restored = pg.evaluate(AUDIO_INFO, jid)
     assert not restored["orig"] and abs(restored["dur"] - before["dur"]) < 0.01, restored
+    assert pg.locator(".fsrow").count() == 1, "the false start is back after undo"
     print("undo restored:", restored)
     # usage
     pg.goto(BASE + "/#/admin/usage"); pg.wait_for_selector("text=By stage and model")

@@ -246,7 +246,31 @@ async function getFFmpeg(onLog) {
  * Adds cleaned narration (+ the outro's own audio) to the silent video.
  * audioStart/duration are on the original recording's clock.
  */
-export async function muxAudio({ video, audioFile, audioStart, duration, hasOutro, outroUrl, onProgress }) {
+// "Enhance audio": lower steady background noise and hum, trim boominess, add a little clarity,
+// soften harsh "s" sounds and even out the level. Runs before the usual loudness normalisation.
+export const ENHANCE = "afftdn=nr=12:nf=-45:tn=1,equalizer=f=120:t=q:w=8:g=-12,equalizer=f=180:t=q:w=8:g=-8," +
+  "equalizer=f=250:t=q:w=1.2:g=-2,equalizer=f=3500:t=q:w=1:g=2.5,deesser=i=0.3," +
+  "acompressor=threshold=-22dB:ratio=2.5:attack=8:release=200:makeup=2";
+const voiceChain = (enhance) => `highpass=f=80,${enhance ? ENHANCE + "," : ""}loudnorm=I=-16:TP=-1.5:LRA=11`;
+
+// A short before/after pair (WAV blobs) so the person can hear what "Enhance audio" does.
+export async function enhancePreview(audioFile, start, dur) {
+  const ff = await getFFmpeg();
+  const ext = (audioFile.name.split(".").pop() || "m4a").toLowerCase().replace(/[^a-z0-9]/g, "");
+  await ff.writeFile(`pv.${ext}`, new Uint8Array(await audioFile.arrayBuffer()));
+  const out = {};
+  for (const [k, enh] of [["before", false], ["after", true]]) {
+    const code = await ff.exec(["-ss", start.toFixed(2), "-t", dur.toFixed(2), "-i", `pv.${ext}`, "-af", enh ? voiceChain(true) : "loudnorm=I=-16:TP=-1.5:LRA=11",
+      "-ar", "48000", "-ac", "1", `pv-${k}.wav`]);
+    if (code !== 0) throw new Error("Couldn't make the preview");
+    out[k] = new Blob([await ff.readFile(`pv-${k}.wav`)], { type: "audio/wav" });
+    try { await ff.deleteFile(`pv-${k}.wav`); } catch {}
+  }
+  try { await ff.deleteFile(`pv.${ext}`); } catch {}
+  return out;
+}
+
+export async function muxAudio({ video, audioFile, audioStart, duration, hasOutro, outroUrl, onProgress, enhance = false }) {
   const ff = await getFFmpeg();
   const logs = [];
   const keepLog = ({ message }) => { logs.push(message); if (logs.length > 40) logs.shift(); };
@@ -257,8 +281,8 @@ export async function muxAudio({ video, audioFile, audioStart, duration, hasOutr
   await ff.writeFile("video.mp4", video);
   await ff.writeFile(`voice.${ext}`, new Uint8Array(await audioFile.arrayBuffer()));
   const S = audioStart.toFixed(3), D = duration.toFixed(3), fadeOut = Math.max(0, duration - 0.8).toFixed(3);
-  const voice = `[1:a]atrim=start=${S}:end=${(audioStart + duration).toFixed(3)},asetpts=PTS-STARTPTS,highpass=f=80,` +
-    `loudnorm=I=-16:TP=-1.5:LRA=11,afade=t=in:d=0.3,afade=t=out:st=${fadeOut}:d=0.8,` +
+  const voice = `[1:a]atrim=start=${S}:end=${(audioStart + duration).toFixed(3)},asetpts=PTS-STARTPTS,${voiceChain(enhance)},` +
+    `afade=t=in:d=0.3,afade=t=out:st=${fadeOut}:d=0.8,` +
     `aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo,apad=whole_dur=${D}`;
   let args;
   let outroHasAudio = false;

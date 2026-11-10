@@ -172,6 +172,7 @@ function newView() {
     <label>Your script <span class="muted">(optional; gives exact LaTeX for your math)</span><textarea name="script" rows="5" placeholder="Paste your script, with math as $…$"></textarea></label>
     <label>Tipsheet <span class="muted">(optional; a .tex, .md or .txt file)</span><input name="tipsheet" type="file" accept=".tex,.md,.txt,text/*"></label>
     <label>Notes for the slide planner <span class="muted">(optional)</span><textarea name="notes" rows="3" placeholder="e.g. Use the domino picture in the mental-model scene"></textarea></label>
+    <label class="switch"><input type="checkbox" name="enhance" checked><span>Enhance audio <span class="muted">(recommended: lowers background noise and hum, evens out the volume and adds clarity; you can compare and change this later)</span></span></label>
     <div id="advbox">
       <label>Advanced animated scenes <span class="muted">(Claude writes custom animation code for a scene; costs a little more)</span></label>
       <select name="advancedMode">
@@ -209,7 +210,7 @@ function newView() {
       const { job } = await api("POST", "/api/jobs", { durationSec,
         title: fd.get("title"), eyebrow: fd.get("eyebrow"), subtitle: fd.get("subtitle"), stream: fd.get("stream"),
         script: fd.get("script"), notes: fd.get("notes"), tipsheet, audioName: audio.name,
-        advancedMode: fd.get("advancedMode") || "off", advancedNotes: fd.get("advancedNotes") || "",
+        advancedMode: fd.get("advancedMode") || "off", advancedNotes: fd.get("advancedNotes") || "", enhance: fd.get("enhance") === "on",
       });
       await putFile(`audio:${job.id}`, audio);
       location.hash = `#/job/${job.id}`;
@@ -438,10 +439,10 @@ async function transcriptReview(job, st) {
         <div><textarea data-k="caption" aria-label="Caption ${i + 1}">${esc(c.caption)}</textarea></div>
         <div><textarea data-k="latex" aria-label="Math version ${i + 1}" class="mono">${esc(c.latex)}</textarea>
           <div class="preview" data-p="${i}">${esc(c.latex)}</div>
-          ${(c.flags || []).map((f, fi) => `<div class="flag"><b>${esc(f.kind === "slip" ? "Possible slip" : f.kind === "ambiguous" ? "Ambiguous" : "Unclear")}:</b> ${esc(f.note)}
+          ${(c.flags || []).map((f, fi) => `<div class="flag"><b>${esc(f.kind === "slip" ? "Possible slip" : f.kind === "ambiguous" ? "Ambiguous" : f.kind === "false-start" ? "False start" : "Unclear")}:</b> ${esc(f.note)}
             ${(f.options || []).map((o, oi) => `<button class="secondary" data-opt="${i}|${fi}|${oi}">Use ${esc(o)}</button>`).join("")}</div>`).join("")}
         </div></div>`).join("")}</div>
-    <div id="patchbox"></div>
+    <div id="cleanbox"></div><div id="patchbox"></div>
     <div id="m"></div>
     <div class="actions"><button id="approve">Approve and plan slides</button><button class="secondary" id="save">Save changes</button>
       <span class="muted small">Planning uses Opus and usually costs $0.30–$0.60.</span></div>`;
@@ -470,7 +471,7 @@ async function transcriptReview(job, st) {
     st.querySelector(`.chunk[data-i="${i}"] textarea[data-k="latex"]`).value = chunks[i].latex;
     typeset(i);
   }));
-  patchPanel(job, document.getElementById("patchbox"));
+  audioPanels(job);
   const persist = () => api("PATCH", `/api/jobs/${job.id}`, { state: { chunks } });
   document.getElementById("save").onclick = async () => { await persist(); document.getElementById("m").innerHTML = `<div class="okmsg">Saved.</div>`; };
   document.getElementById("approve").onclick = async () => {
@@ -505,13 +506,13 @@ async function slideReview(job, st) {
       }).join("")}</div>
       <label>Comments on this scene <span class="muted">(optional)</span><textarea data-scene="${si}" rows="2" placeholder="e.g. Box the final answer; move the note to the next build"></textarea></label>
     </div>`).join("")}
-    <div id="patchbox"></div>
+    <div id="cleanbox"></div><div id="patchbox"></div>
     <div class="card"><label>General comments <span class="muted">(optional)</span><textarea id="general" rows="2"></textarea></label>
     <div id="m"></div>
     <div class="actions"><button id="render">Approve and render</button><button class="secondary" id="apply">Apply comments</button>
       <button class="link" id="adv">Edit the slide spec directly</button></div>
     <div id="advbox"></div></div>`;
-  patchPanel(job, document.getElementById("patchbox"));
+  audioPanels(job);
   let stopPlay = null;
   st.querySelectorAll("[data-play]").forEach((btn) => (btn.onclick = async () => {
     const si = Number(btn.dataset.play);
@@ -556,7 +557,7 @@ async function doneView(job, st) {
   const out = job.state.output || {};
   const name = out.name || "video";
   st.innerHTML = `<h2>Your video is ready</h2>
-    ${job.state.patchedAfterRender ? `<div class="warn">You've changed the narration with your AI voice since this video was rendered. Choose <b>Render again</b> to hear the change in the video.</div>` : ""}
+    ${job.state.patchedAfterRender ? `<div class="warn">You've changed the narration or its audio settings since this video was rendered. Choose <b>Render again</b> to hear the change in the video.</div>` : ""}
     ${mp4 ? `<video controls src="${URL.createObjectURL(mp4)}"></video>` :
       `<div class="warn">The finished file isn't stored in this browser (it was made on another computer or cleared). Re-render it here from the approved slides — that step costs only a few cents.</div>`}
     <div class="actions">
@@ -567,10 +568,10 @@ async function doneView(job, st) {
     </div>
     ${out.flags?.length ? `<h3>The final check flagged ${out.flags.length} frame${out.flags.length > 1 ? "s" : ""}</h3>
       <ul>${out.flags.map((f) => `<li>Build ${f.build + 1}: ${esc(f.issue)}</li>`).join("")}</ul>` : mp4 ? `<div class="okmsg">The final frame check found no problems.</div>` : ""}
-    <div id="patchbox"></div>
+    <div id="cleanbox"></div><div id="patchbox"></div>
     <p class="muted small">Download your files now: the finished video is kept only in this browser. Remember brand@ontariotechu.ca asks to be contacted before the Ontario Tech name or logo is used in a project.</p>`;
   document.getElementById("rerender").onclick = () => { job._error = null; startStage(job, "render"); jobView(job.id); };
-  patchPanel(job, document.getElementById("patchbox"));
+  audioPanels(job);
   document.getElementById("back").onclick = async () => { await api("PATCH", `/api/jobs/${job.id}`, { status: "review-slides" }); jobView(job.id); };
 }
 
@@ -992,6 +993,97 @@ async function voiceView() {
   };
 }
 
+// The audio tools on a video: enhancement, false-start cuts, and (if turned on) AI-voice fixes.
+function audioPanels(job) {
+  cleanupPanel(job, document.getElementById("cleanbox"));
+  patchPanel(job, document.getElementById("patchbox"));
+}
+const editsSaver = (job) => (state) => api("PATCH", `/api/jobs/${job.id}`, { state });
+const afterEdit = async (job) => { (await pipeline()).forgetAudio(job.id); jobView(job.id, true); };
+
+async function cleanupPanel(job, host) {
+  if (!host || !(job.state.chunks || []).length) return;
+  if (!(await getFile(`audio:${job.id}`))) return;
+  const enhance = job.state.enhance !== false;
+  host.innerHTML = `<div class="card clean"><h3>Audio</h3>
+    <label class="switch big"><input type="checkbox" id="enh" ${enhance ? "checked" : ""}><span><b>Enhance audio</b>
+      <span class="muted">(lowers background noise and hum, trims boominess, adds clarity, softens harsh “s” sounds and evens out the volume; applied when the video is rendered)</span></span></label>
+    <div class="actions"><button class="secondary small-btn" id="enhpv">Compare before and after</button><span id="enhout"></span></div>
+    <h4>False starts</h4><div id="fs">${loading("Listening for restarts")}</div><div id="fsm"></div></div>`;
+  const save = editsSaver(job);
+  host.querySelector("#enh").onchange = async (ev) => {
+    const state = { enhance: ev.target.checked, ...(job.status === "done" ? { patchedAfterRender: true } : {}) };
+    Object.assign(job.state, state);
+    await save(state);
+    if (job.status === "done") jobView(job.id, true);
+  };
+  host.querySelector("#enhpv").onclick = async (ev) => {
+    const out = host.querySelector("#enhout");
+    ev.target.disabled = true;
+    out.innerHTML = loading("Making a 12-second sample");
+    try {
+      const file = await getFile(`audio:${job.id}`);
+      const c = job.state.chunks.find((x) => x.end - x.start > 6) || job.state.chunks[0];
+      const { before, after } = await (await pipeline()).enhancePreview(file, Math.max(0, c.start - 0.3), 12);
+      out.innerHTML = `<span class="pvpair"><span class="small">Before</span> <audio controls src="${URL.createObjectURL(before)}"></audio>
+        <span class="small">After</span> <audio controls src="${URL.createObjectURL(after)}"></audio></span>`;
+    } catch (e) { showErr(out, e); }
+    ev.target.disabled = false;
+  };
+  const fsBox = host.querySelector("#fs"), fsm = host.querySelector("#fsm");
+  let list;
+  try { list = await (await patchMod()).findFalseStarts(job); } catch (e) { showErr(fsBox, e); return; }
+  const kept = new Set(job.state.keptStarts || []);
+  const keyOf = (f) => `${job.state.chunks[f.i].id}:${f.cut}`;
+  list = list.filter((f) => !kept.has(keyOf(f)));
+  const cuts = (job.state.patches || []).filter((p) => p.kind === "cut").flatMap((p) => p.cuts);
+  const P = await patchMod();
+  fsBox.innerHTML = `${list.length ? `<p class="small muted">Places where you stopped and restarted. Listen, then cut the abandoned words: only that bit of audio is removed, and the captions follow. Nothing is re-generated.</p>
+      <div class="plist">${list.map((f, k) => {
+        const c = job.state.chunks[f.i];
+        return `<div class="fsrow" data-k="${k}"><span class="t">${fmtT(f.a)}</span>
+          <span class="txt">Cut <b>“${esc(f.cut)}”</b> from “${esc(String(c.caption ?? c.text).slice(0, 110))}${String(c.caption ?? c.text).length > 110 ? "…" : ""}”
+            <span class="small muted">${esc(f.why)} · ${(f.b - f.a).toFixed(1)} s${f.approx ? " · position estimated, listen first" : ""}</span>
+            <span class="pv"></span></span>
+          <span class="btns"><button class="secondary small-btn" data-act="listen">Listen</button><button class="small-btn" data-act="cut">Cut</button><button class="link" data-act="keep">Keep</button></span></div>`;
+      }).join("")}</div>
+      ${list.length > 1 ? `<div class="actions"><button class="secondary" id="cutall">Cut all ${list.length}</button></div>` : ""}`
+    : `<p class="small muted">No false starts found${cuts.length ? " (any more)" : ""}.</p>`}
+    ${cuts.length ? `<p class="small">Cut so far: ${cuts.map((c) => `“${esc(c.cut)}”`).join(", ")}. <button class="link" id="undocuts">Undo all edits</button></p>` : ""}`;
+  fsBox.querySelectorAll(".fsrow").forEach((row) => {
+    const f = list[Number(row.dataset.k)];
+    row.querySelector('[data-act="listen"]').onclick = async (ev) => {
+      ev.target.disabled = true;
+      try {
+        const { before, after } = await P.cutPreview(job, f);
+        row.querySelector(".pv").innerHTML = `<span class="pvpair"><span class="small">Now</span> <audio controls src="${before}"></audio>
+          <span class="small">With the cut</span> <audio controls src="${after}"></audio></span>`;
+      } catch (e) { showErr(fsm, e); }
+    };
+    row.querySelector('[data-act="cut"]').onclick = async (ev) => {
+      ev.target.disabled = true;
+      try { await P.applyCuts(job, [f], save); await afterEdit(job); } catch (e) { ev.target.disabled = false; showErr(fsm, e); }
+    };
+    row.querySelector('[data-act="keep"]').onclick = async () => {
+      const keptStarts = [...kept, keyOf(f)];
+      job.state.keptStarts = keptStarts;
+      await save({ keptStarts });
+      cleanupPanel(job, host);
+    };
+  });
+  const all = fsBox.querySelector("#cutall");
+  if (all) all.onclick = async () => {
+    if (!confirm(`Cut all ${list.length} false starts? You can undo this.`)) return;
+    all.disabled = true;
+    try { await P.applyCuts(job, list, save); await afterEdit(job); } catch (e) { all.disabled = false; showErr(fsm, e); }
+  };
+  const undo = fsBox.querySelector("#undocuts");
+  if (undo) undo.onclick = async () => {
+    if (!confirm("Put back your original recording and transcript? Every cut and every AI-voice fix is undone.")) return;
+    try { await P.undoAll(job, save); await afterEdit(job); } catch (e) { showErr(fsm, e); }
+  };
+}
+
 // "Fix a line" panel shown on a video when the person's voice is on and ready.
 async function patchPanel(job, host) {
   if (!host) return;
@@ -1004,9 +1096,9 @@ async function patchPanel(job, host) {
   const per = (n) => (n / 1000) * v.pricePer1kChars;
   const line = (c) => String(c.caption ?? c.text ?? "").replace(/\s+/g, " ").trim();
   host.innerHTML = `<details class="card patch" ${patchOpen.has(job.id) ? "open" : ""}><summary><b>Fix a line with your AI voice</b>
-      <span class="muted">— re-say a sentence without re-recording${patches.length ? ` · ${patches.length} line${patches.length > 1 ? "s" : ""} fixed` : ""}</span></summary>
+      <span class="muted">— re-say a sentence without re-recording${(() => { const n = patches.filter((p) => p.kind !== "cut").length; return n ? ` · ${n} line${n > 1 ? "s" : ""} fixed` : ""; })()}</span></summary>
     <p class="small muted">Choose the line, type what you meant to say, and pick the best of three takes. Each line is cut at the pauses around it, so keep the fix to the same sentence. Three takes of a typical sentence cost about ${money(per(3 * 110), 3)}.</p>
-    ${patches.length ? `<p class="small">Fixed so far: ${patches.map((p) => `“${esc(p.to)}”`).join("; ")}. <button class="link" id="undoall">Undo all fixes</button></p>` : ""}
+    ${patches.some((p) => p.kind !== "cut") ? `<p class="small">Fixed so far: ${patches.filter((p) => p.kind !== "cut").map((p) => `“${esc(p.to)}”`).join("; ")}. <button class="link" id="undoall">Undo all edits</button></p>` : ""}
     <div class="plist">${chunks.map((c, i) => `<div class="pline ${c.patched ? "patched" : ""}" data-i="${i}">
       <span class="t">${fmtT(c.start)}</span><span class="txt">${esc(line(c))}${c.patched ? ' <span class="pill">AI voice</span>' : ""}</span>
       <button class="secondary small-btn" data-fix="${i}">Fix this line</button></div>`).join("")}</div>
@@ -1018,7 +1110,7 @@ async function patchPanel(job, host) {
   const after = async () => { (await pipeline()).forgetAudio(job.id); patchOpen.add(job.id); jobView(job.id, true); };
   const undo = host.querySelector("#undoall");
   if (undo) undo.onclick = async () => {
-    if (!confirm("Put back your original recording and transcript? Every fixed line goes back to how you said it.")) return;
+    if (!confirm("Put back your original recording and transcript? Every fixed line and every cut goes back to how you recorded it.")) return;
     try { await (await patchMod()).undoAll(job, save); await after(); } catch (e) { showErr(pm, e); }
   };
   host.querySelectorAll("[data-fix]").forEach((b) => (b.onclick = async () => {

@@ -23,7 +23,7 @@ function replyFor(body) {
 
 // ---- fake AssemblyAI ----
 // Words for dev/fixtures/test_voice7.m4a: a 3 s burst of "speech" every 4 s.
-const SENTENCES = ["Okay so today we count walls", "Picture a wall two units tall and n units long", "Look at the right hand end of the wall",
+const SENTENCES = ["Okay so today we count walls", "Picture a wall two units tall and n units long", "Look at the, look at the right hand end of the wall",
   "So every wall of length n is one of these plus the walls with two flat dominoes", "Let's find a three and then a four and a five",
   "A common mistake is to write a n equals a n minus one plus one", "So to recap here are three steps"];
 export const assemblyCalls = [];

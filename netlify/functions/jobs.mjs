@@ -59,7 +59,7 @@ export default async (req) => {
         costUsd: 0, calls: 0, audioName: String(b.audioName || ""), state: { notes: String(b.notes || "").slice(0, 4000),
           script: String(b.script || "").slice(0, 60000), tipsheet: String(b.tipsheet || "").slice(0, 60000),
           advancedMode: s.allowAdvanced === false ? "off" : ["off", "auto", "requested"].includes(b.advancedMode) ? b.advancedMode : "auto",
-          advancedNotes: String(b.advancedNotes || "").slice(0, 3000) },
+          advancedNotes: String(b.advancedNotes || "").slice(0, 3000), enhance: b.enhance !== false },
       };
       await jobsStore().setJSON(job.id, job);
       return json({ job });

@@ -106,6 +106,11 @@ with sync_playwright() as p:
     pg.click("text=Upload and start")
     pg.wait_for_selector("text=Checkpoint A", timeout=120000)
     print("assemblyai transcript chunks:", pg.locator(".chunk").count())
+    pg.wait_for_selector(".fsrow", timeout=30000)
+    fs = pg.inner_text(".fsrow .txt")
+    print("assemblyai false start:", fs.replace("\n", " | "))
+    assert "estimated" not in fs, "word timings should give an exact cut"
+    pg.click(".fsrow [data-act=cut]"); pg.wait_for_selector("text=Cut so far", timeout=30000)
     pg.click("text=Approve and plan slides")
     pg.wait_for_selector(".thumb img", timeout=120000)
     pg.click("text=Approve and render")

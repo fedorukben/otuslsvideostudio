@@ -11,6 +11,7 @@ For every chunk return:
   - {"kind":"ambiguous","note":"...","options":["$\\frac{1}{x+1}$","$\\frac{1}{x} + 1$"]} when spoken math has more than one reading and the script doesn't settle it. Put your best reading in "latex" and list all readings in options.
   - {"kind":"slip","note":"..."} when the narrator's words change the math meaning (e.g. "multiply the derivative" vs "multiply by the derivative", or saying a different number than the script). Explain the difference briefly.
   - {"kind":"unclear","note":"..."} when the recognition looks garbled.
+  - {"kind":"false-start","note":"...","cut":"<the abandoned words, copied exactly from caption>"} when the narrator starts a phrase, stops, and starts it again (e.g. caption "So the, so the derivative is" → cut "So the,"), or abandons a half-finished word or phrase before restarting. "cut" must be the exact words to delete so the rest reads as one clean sentence; keep the complete second attempt. Keep these words in "caption" (captions are fixed only if the narrator cuts the audio).
 
 Reply with JSON only, no prose, in this shape:
 {"chunks":[{"id":0,"caption":"...","latex":"...","flags":[]}, ...]}

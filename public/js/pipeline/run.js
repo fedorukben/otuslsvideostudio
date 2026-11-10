@@ -23,6 +23,7 @@ async function audioFor(job) {
 }
 export const forgetAudio = (jobId) => audioCache.delete(jobId);
 export { makeTake, applyTake, undoAll, lineClip } from "./patch.js";
+export { enhancePreview } from "./encode.js";
 
 async function save(job, patch) {
   Object.assign(job, patch.title ? { title: patch.title } : {}, patch.status ? { status: patch.status } : {});
@@ -160,7 +161,7 @@ export async function render(job, ui, asrModel) {
   if (!hasOutro) ui.warn?.("The Ontario Tech outro clip wasn't found at /assets/OT_Outro_White.mp4, so this video has no outro. Ask an admin to add it.");
 
   ui.step("Mixing audio and adding the outro");
-  const mp4 = await stepRun("Mixing audio", () => muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl,
+  const mp4 = await stepRun("Mixing audio", () => muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl, enhance: job.state.enhance !== false,
     onProgress: (p) => ui.progress(p, "Mixing audio") }));
   const srt = toSrt(capsRaw, lessonStart);
 
