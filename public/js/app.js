@@ -1,7 +1,9 @@
 // SLS Video Studio — single-page app (no build step).
 import { api } from "./api.js";
 import { putFile, getFile, delFile } from "./idb.js";
-import * as run from "./pipeline/run.js";
+// The pipeline (and its large libraries) loads only when a video needs it,
+// so sign-in and admin pages work even if a library fails to load.
+const pipeline = () => import("./pipeline/run.js");
 import { loadMathJax } from "./pipeline/render.js";
 
 const $app = document.getElementById("app");
@@ -20,8 +22,30 @@ const statusTag = (s) => `<span class="status ${esc(s)}">${esc(STATUS_TEXT[s] ||
 function form(el) { return Object.fromEntries(new FormData(el).entries()); }
 function showErr(where, e) { where.innerHTML = `<div class="err">${esc(e.message || e)}</div>`; }
 
+// ---------------- self-check ----------------
+// If the deploy left out public/vendor/, Netlify answers with an HTML page instead of the file.
+async function checkVendor() {
+  const files = ["/vendor/mp4-muxer.mjs", "/vendor/fonts/ubuntu-latin-400-normal.woff2", "/vendor/mathjax/tex-svg-full.js",
+    "/vendor/ffmpeg/index.js", "/vendor/ffmpeg/core/ffmpeg-core.wasm", "/vendor/transformers/transformers.min.js", "/vendor/mp4box.all.min.js"];
+  const missing = [];
+  await Promise.all(files.map(async (f) => {
+    try {
+      const r = await fetch(f, { method: "HEAD", cache: "no-store" });
+      if (!r.ok || (r.headers.get("content-type") || "").includes("text/html")) missing.push(f);
+    } catch { missing.push(f); }
+  }));
+  if (!missing.length) return;
+  const box = document.createElement("div");
+  box.className = "err";
+  box.style.margin = "0";
+  box.innerHTML = `<b>This deploy is missing bundled files</b>, so videos can't be made yet. Missing: ${missing.map(esc).join(", ")}.
+    Redeploy the whole project including the <code>public/vendor/</code> folder (see the README).`;
+  document.body.insertBefore(box, document.querySelector("main"));
+}
+
 // ---------------- routing ----------------
 async function boot() {
+  checkVendor();
   const s = await api("GET", "/api/auth/status");
   me = s.user;
   if (s.needsSetup) return setupView();
@@ -160,8 +184,11 @@ function startStage(job, stage, extra) {
     progress: (p, label) => { r.progress = p; r.label = label; paintProgress(job.id); },
     warn: (w) => { r.warnings.push(w); paint(job.id); },
   };
-  const go = { analyse: () => run.analyse(job, ui, asrModel), plan: () => run.plan(job, ui),
-    revise: () => run.revise(job, extra, ui), render: () => run.render(job, ui, asrModel) }[stage];
+  const go = async () => {
+    const run = await pipeline();
+    return { analyse: () => run.analyse(job, ui, asrModel), plan: () => run.plan(job, ui),
+      revise: () => run.revise(job, extra, ui), render: () => run.render(job, ui, asrModel) }[stage]();
+  };
   go().then(() => { running.delete(job.id); if (r.warnings.length) job._warnings = r.warnings; refreshIfOpen(job.id); })
     .catch(async (e) => {
       console.error(e);
@@ -226,7 +253,7 @@ async function jobView(id, keepScroll) {
     location.hash = "#/videos";
   };
   const re = document.getElementById("reattach");
-  if (re) re.onchange = async () => { if (re.files[0]) { await putFile(`audio:${id}`, re.files[0]); run.forgetAudio(id); jobView(id); } };
+  if (re) re.onchange = async () => { if (re.files[0]) { await putFile(`audio:${id}`, re.files[0]); (await pipeline()).forgetAudio(id); jobView(id); } };
   if (r) { paint(id); return; }
   const st = document.getElementById("stage");
   const resume = (label, stage, note = "") => {
@@ -303,7 +330,7 @@ async function transcriptReview(job, st) {
 // ----- Checkpoint B -----
 async function slideReview(job, st) {
   st.innerHTML = `<h2>Checkpoint B: review the slides</h2><p class="muted">Drawing every slide…</p>`;
-  const thumbs = await run.thumbnails(job, 640);
+  const thumbs = await (await pipeline()).thumbnails(job, 640);
   const spec = job.state.spec;
   const chunkById = new Map((job.state.chunks || []).map((c) => [c.id, c]));
   const comments = job.state.lastComments && false ? job.state.lastComments : { scenes: {}, general: "" };
