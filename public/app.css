@@ -149,3 +149,23 @@ label.switch > span > input[type=number] { padding: 4px 8px; }
 .player { margin: 10px 0 14px; }
 .player canvas { width: 100%; max-width: 960px; display: block; border: 1px solid var(--line); background: #fff; }
 button.small-btn { padding: 6px 12px; font-size: 14px; }
+
+/* Voice */
+details > summary { cursor: pointer; }
+details.card.patch > summary { list-style: none; }
+details.card.patch > summary::before { content: "▸ "; color: var(--blue); }
+details.card.patch[open] > summary::before { content: "▾ "; }
+.plist { max-height: 340px; overflow: auto; border: 1px solid #DDE3EA; margin-top: 10px; }
+.pline { display: grid; grid-template-columns: 48px 1fr auto; gap: 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid #EEF2F6; }
+.pline:last-child { border-bottom: 0; }
+.pline .t { font-size: 13px; color: #5B6770; font-variant-numeric: tabular-nums; }
+.pline.on { background: #E7F1FB; }
+.pline.patched .txt { color: #003C71; }
+.sub { border-left: 4px solid #0077CA; padding: 4px 0 4px 16px; margin-top: 16px; }
+.take { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.take audio, #orig audio { height: 36px; vertical-align: middle; }
+details.script { background: #F6F8FA; padding: 10px 14px; margin: 10px 0 16px; }
+details.script h4 { margin: 14px 0 4px; font-size: 15px; }
+details.script p { margin: 4px 0; }
+input[type=range] { width: 100%; padding: 0; }
+label.switch.big { margin-top: 0; }

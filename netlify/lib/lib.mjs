@@ -158,7 +158,13 @@ export const DEFAULT_SETTINGS = {
     perHour: { "universal-3-5-pro": 0.21, "universal-3-pro": 0.21, "universal-2": 0.15 },
     keytermsPerHour: 0.05,
   },
-  keys: [], // [{id, provider: "anthropic"|"assemblyai", label, last4, enc, active, addedAt, addedBy}]
+  // Voice patching: each person can clone their own voice (ElevenLabs Instant Voice Clone) to re-say a line.
+  allowVoice: true,
+  elevenlabsModel: "eleven_multilingual_v2",
+  voicePrices: { // USD per 1,000 characters of generated speech, by ElevenLabs model
+    "eleven_multilingual_v2": 0.10, "eleven_v3": 0.10, "eleven_flash_v2_5": 0.05, "eleven_turbo_v2_5": 0.05,
+  },
+  keys: [], // [{id, provider: "anthropic"|"assemblyai"|"elevenlabs", label, last4, enc, active, addedAt, addedBy}]
 };
 export async function getSettings() {
   const s = (await settingsStore().get("config", { type: "json" })) || {};
@@ -167,11 +173,12 @@ export async function getSettings() {
     stageModels: { ...DEFAULT_SETTINGS.stageModels, ...(s.stageModels || {}) },
     prices: { ...DEFAULT_SETTINGS.prices, ...(s.prices || {}) },
     transcriptionPrices: { ...DEFAULT_SETTINGS.transcriptionPrices, ...(s.transcriptionPrices || {}) },
+    voicePrices: { ...DEFAULT_SETTINGS.voicePrices, ...(s.voicePrices || {}) },
     keys: (s.keys || []).map((k) => ({ provider: "anthropic", ...k })),
   };
 }
 export const saveSettings = (s) => settingsStore().setJSON("config", s);
-export const PROVIDERS = ["anthropic", "assemblyai"];
+export const PROVIDERS = ["anthropic", "assemblyai", "elevenlabs"];
 export const activeKey = (s, provider = "anthropic") => s.keys.find((k) => (k.provider || "anthropic") === provider && k.active);
 
 export function costOf(prices, model, u) {

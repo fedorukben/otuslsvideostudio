@@ -36,6 +36,8 @@ const routes = [
   [/^\/api\/jobs(\/|$)/, "jobs.mjs"],
   [/^\/api\/claude\//, "claude.mjs"],
   [/^\/api\/transcribe\//, "transcribe.mjs"],
+  [/^\/api\/voice\//, "voice.mjs"],
+  [/^\/\.netlify\/functions\/voice-clone-background/, "voice-clone-background.mjs", true],
   [/^\/\.netlify\/functions\/transcribe-run-background/, "transcribe-run-background.mjs", true],
   [/^\/\.netlify\/functions\/claude-run-background/, "claude-run-background.mjs", true],
 ];

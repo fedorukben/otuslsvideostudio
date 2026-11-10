@@ -136,4 +136,53 @@ const small = (await call("POST", "/api/jobs", { title: "Short", durationSec: 12
 const big = (await call("POST", "/api/jobs", { title: "Long", durationSec: 30 * 60 })).job;
 ok(small.status === "new" && big.status === "awaiting-approval", `threshold mode: $${small.approval.estimateUsd} goes ahead, $${big.approval.estimateUsd} waits`);
 
+// ----- voice patching (ElevenLabs) -----
+cookie = adminCookie;
+await call("PUT", "/api/admin/settings", { approvalMode: "none" });
+let vm = await call("GET", "/api/voice/me");
+ok(!vm.available && /ElevenLabs/.test(vm.reason) && vm.voice.enabled === false, "voice unavailable until an ElevenLabs key is added; off by default");
+await call("POST", "/api/admin/keys", { provider: "elevenlabs", label: "Voice key", key: "sk_0123456789abcdef0123456789abcdef" });
+vm = await call("GET", "/api/voice/me");
+ok(vm.available && vm.voice.status === "none" && vm.pricePer1kChars === 0.1, "voice available once a key exists");
+await call("POST", "/api/voice/speak", { text: "Hello" }, 409);
+await call("PUT", "/api/voice/me", { enabled: true, settings: { speed: 2, stability: 0.3 } });
+vm = await call("GET", "/api/voice/me");
+ok(vm.voice.enabled && vm.voice.settings.speed === 1.2 && vm.voice.settings.stability === 0.3, "enable + settings saved (speed clamped to 1.2)");
+const fs = await import("node:fs");
+const sample = fs.readFileSync(new URL("./fixtures/test_voice7.m4a", import.meta.url)).toString("base64");
+await call("POST", "/api/voice/sample/start", { parts: 1, durationSec: 120, sampleName: "me.m4a", mime: "audio/mp4" }, 400);
+await call("POST", "/api/voice/sample/start", { parts: 1, durationSec: 10, consent: true }, 400);
+async function makeVoice() {
+  const st = await call("POST", "/api/voice/sample/start", { parts: 1, durationSec: 120, sampleName: "me.m4a", mime: "audio/mp4", consent: true });
+  await call("POST", "/api/voice/sample/part", { id: st.id, n: 0, data: sample });
+  await call("POST", "/api/voice/sample/run", { id: st.id });
+  for (let i = 0; i < 50; i++) { const r = await call("GET", "/api/voice/sample/result?id=" + st.id); if (r.status === "done") return r; if (r.status === "error") throw new Error(r.error); await new Promise((r) => setTimeout(r, 100)); }
+  throw new Error("clone never finished");
+}
+let made = await makeVoice();
+ok(made.voice.status === "ready" && made.voice.sampleSeconds === 120 && made.voice.consentAt, "sample uploaded, voice created, consent recorded");
+const take = await call("POST", "/api/voice/speak", { text: "You multiply by the derivative of the inside.", previousText: "So here's the trick.", nextText: "Let's check it.", seed: 7 });
+ok(take.audio.length > 1000 && take.chars === 45 && Math.abs(take.costUsd - 0.0045) < 1e-9, `one take: ${take.chars} characters, $${take.costUsd}`);
+await call("POST", "/api/voice/speak", { text: "x".repeat(601) }, 400);
+const firstAt = made.voice.createdAt;
+await new Promise((r) => setTimeout(r, 20));
+made = await makeVoice();
+ok(made.voice.createdAt !== firstAt && made.voice.settings.speed === 1.2, "replacing the sample keeps settings and makes a new voice");
+await call("PUT", "/api/voice/me", { enabled: false });
+await call("POST", "/api/voice/speak", { text: "Hello" }, 409);
+ok(true, "turning the voice off blocks patches");
+await call("PUT", "/api/voice/me", { enabled: true });
+const vj = (await call("POST", "/api/jobs", { title: "Voice job", durationSec: 60 })).job;
+const t2 = await call("POST", "/api/voice/speak", { text: "Check the sign.", jobId: vj.id });
+ok(Math.abs((await call("GET", "/api/jobs/" + vj.id)).job.costUsd - t2.costUsd) < 1e-9, "a patch take is charged to its video");
+const vu = await call("GET", "/api/admin/usage");
+const vrow = vu.byStage.find((r) => r.stage === "voice");
+ok(vrow && vrow.characters === 60 && vrow.calls === 2, "usage shows voice characters and calls");
+cookie = taCookie;
+ok((await call("GET", "/api/voice/me")).voice.status === "none", "other people's voices are separate");
+await call("POST", "/api/voice/speak", { text: "Hi", jobId: vj.id }, 409);
+cookie = adminCookie;
+await call("POST", "/api/voice/delete", {});
+ok((await call("GET", "/api/voice/me")).voice.status === "none", "voice deleted");
+
 console.log("\nALL API TESTS PASSED");

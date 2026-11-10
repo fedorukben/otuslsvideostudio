@@ -50,8 +50,48 @@ async function mockAssembly(url, init = {}) {
   return j({ error: "not mocked" }, 404);
 }
 
+// ---- fake ElevenLabs ----
+export const elevenCalls = [];
+function toneWav(seconds, sr = 22050) {
+  const n = Math.round(seconds * sr), data = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const env = Math.sin(Math.PI * ((t * 3) % 1)) ** 2; // "syllables"
+    const v = Math.sin(2 * Math.PI * 180 * t) * 0.3 * env + Math.sin(2 * Math.PI * 360 * t) * 0.1 * env;
+    data.writeInt16LE(Math.round(v * 32767), i * 2);
+  }
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + data.length, 4); h.write("WAVE", 8); h.write("fmt ", 12); h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(sr, 24); h.writeUInt32LE(sr * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write("data", 36); h.writeUInt32LE(data.length, 40);
+  // 0.15 s of silence either side, like real TTS output
+  const pad = Buffer.alloc(Math.round(0.15 * sr) * 2);
+  const all = Buffer.concat([h, pad, data, pad]);
+  all.writeUInt32LE(all.length - 8, 4); all.writeUInt32LE(data.length + pad.length * 2, 40);
+  return all;
+}
+async function mockEleven(url, init = {}) {
+  const u = new URL(url);
+  const j = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
+  if (!init.headers?.["xi-api-key"]) return j({ detail: "missing key" }, 401);
+  if (u.pathname === "/v1/voices/add" && init.method === "POST") {
+    const files = init.body.getAll("files");
+    elevenCalls.push({ op: "add", name: init.body.get("name"), bytes: files[0]?.size || 0, noise: init.body.get("remove_background_noise") });
+    return j({ voice_id: "voice_" + Math.random().toString(36).slice(2, 10), requires_verification: false });
+  }
+  if (u.pathname.startsWith("/v1/voices/") && init.method === "DELETE") { elevenCalls.push({ op: "delete", id: u.pathname.split("/").pop() }); return j({ status: "ok" }); }
+  if (u.pathname.startsWith("/v1/text-to-speech/")) {
+    const b = JSON.parse(init.body);
+    elevenCalls.push({ op: "tts", voice: u.pathname.split("/").pop(), text: b.text, model: b.model_id, prev: b.previous_text, next: b.next_text, seed: b.seed, settings: b.voice_settings });
+    const wav = toneWav(Math.max(0.8, b.text.length / 15) * (b.voice_settings?.speed ? 1 / b.voice_settings.speed : 1));
+    return new Response(wav, { status: 200, headers: { "content-type": "audio/wav", "character-cost": String(b.text.length) } });
+  }
+  return j({ detail: "not mocked" }, 404);
+}
+
 export async function mockFetch(url, init) {
   if (String(url).startsWith("https://api.assemblyai.com")) return mockAssembly(url, init);
+  if (String(url).startsWith("https://api.elevenlabs.io")) return mockEleven(url, init);
   const body = JSON.parse(init.body);
   const text = replyFor(body);
   // MOCK_SLOW=1 makes the planning call take 8 s, to test the live cost ticker.

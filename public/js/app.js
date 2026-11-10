@@ -5,6 +5,7 @@ import { putFile, getFile, delFile } from "./idb.js";
 // so sign-in and admin pages work even if a library fails to load.
 const pipeline = () => import("./pipeline/run.js");
 import { loadMathJax } from "./pipeline/render.js";
+import { SAMPLE_SCRIPT, RECORDING_TIPS } from "./voice-script.js";
 
 const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
@@ -76,7 +77,7 @@ function navHtml() {
   const a = (href, label) => `<a href="${href}" class="${h.startsWith(href) ? "on" : ""}">${label}</a>`;
   return a("#/videos", "My videos") + a("#/new", "New video") +
     (me.role === "admin" ? `<span class="sep"></span>${a("#/admin/approvals", `Approvals<span class="badge" id="apcount" hidden></span>`)}${a("#/admin/usage", "Usage")}${a("#/admin/users", "Users")}${a("#/admin/keys", "API keys")}${a("#/admin/settings", "Settings")}` : "") +
-    `<span class="sep"></span>${a("#/account", esc(me.name || me.email))}<button id="signout">Sign out</button>`;
+    `<span class="sep"></span>${a("#/voice", "Voice")}${a("#/account", esc(me.name || me.email))}<button id="signout">Sign out</button>`;
 }
 function route() {
   $nav.innerHTML = navHtml();
@@ -88,6 +89,7 @@ function route() {
   if (a === "new") return newView();
   if (a === "job") return jobView(b);
   if (a === "account") return passwordView(false);
+  if (a === "voice") return voiceView();
   if (a === "admin" && me.role === "admin") {
     if (b === "approvals") return approvalsView();
     if (b === "usage") return usageView();
@@ -373,7 +375,7 @@ async function jobView(id, keepScroll) {
   document.getElementById("del").onclick = async () => {
     if (!confirm("Delete this video? Its usage history stays in the admin reports.")) return;
     await api("DELETE", `/api/jobs/${id}`);
-    for (const k of ["audio", "mp4", "srt"]) await delFile(`${k}:${id}`);
+    for (const k of ["audio", "audio-original", "mp4", "srt"]) await delFile(`${k}:${id}`);
     location.hash = "#/videos";
   };
   const re = document.getElementById("reattach");
@@ -439,6 +441,7 @@ async function transcriptReview(job, st) {
           ${(c.flags || []).map((f, fi) => `<div class="flag"><b>${esc(f.kind === "slip" ? "Possible slip" : f.kind === "ambiguous" ? "Ambiguous" : "Unclear")}:</b> ${esc(f.note)}
             ${(f.options || []).map((o, oi) => `<button class="secondary" data-opt="${i}|${fi}|${oi}">Use ${esc(o)}</button>`).join("")}</div>`).join("")}
         </div></div>`).join("")}</div>
+    <div id="patchbox"></div>
     <div id="m"></div>
     <div class="actions"><button id="approve">Approve and plan slides</button><button class="secondary" id="save">Save changes</button>
       <span class="muted small">Planning uses Opus and usually costs $0.30–$0.60.</span></div>`;
@@ -467,6 +470,7 @@ async function transcriptReview(job, st) {
     st.querySelector(`.chunk[data-i="${i}"] textarea[data-k="latex"]`).value = chunks[i].latex;
     typeset(i);
   }));
+  patchPanel(job, document.getElementById("patchbox"));
   const persist = () => api("PATCH", `/api/jobs/${job.id}`, { state: { chunks } });
   document.getElementById("save").onclick = async () => { await persist(); document.getElementById("m").innerHTML = `<div class="okmsg">Saved.</div>`; };
   document.getElementById("approve").onclick = async () => {
@@ -501,11 +505,13 @@ async function slideReview(job, st) {
       }).join("")}</div>
       <label>Comments on this scene <span class="muted">(optional)</span><textarea data-scene="${si}" rows="2" placeholder="e.g. Box the final answer; move the note to the next build"></textarea></label>
     </div>`).join("")}
+    <div id="patchbox"></div>
     <div class="card"><label>General comments <span class="muted">(optional)</span><textarea id="general" rows="2"></textarea></label>
     <div id="m"></div>
     <div class="actions"><button id="render">Approve and render</button><button class="secondary" id="apply">Apply comments</button>
       <button class="link" id="adv">Edit the slide spec directly</button></div>
     <div id="advbox"></div></div>`;
+  patchPanel(job, document.getElementById("patchbox"));
   let stopPlay = null;
   st.querySelectorAll("[data-play]").forEach((btn) => (btn.onclick = async () => {
     const si = Number(btn.dataset.play);
@@ -550,6 +556,7 @@ async function doneView(job, st) {
   const out = job.state.output || {};
   const name = out.name || "video";
   st.innerHTML = `<h2>Your video is ready</h2>
+    ${job.state.patchedAfterRender ? `<div class="warn">You've changed the narration with your AI voice since this video was rendered. Choose <b>Render again</b> to hear the change in the video.</div>` : ""}
     ${mp4 ? `<video controls src="${URL.createObjectURL(mp4)}"></video>` :
       `<div class="warn">The finished file isn't stored in this browser (it was made on another computer or cleared). Re-render it here from the approved slides — that step costs only a few cents.</div>`}
     <div class="actions">
@@ -560,8 +567,10 @@ async function doneView(job, st) {
     </div>
     ${out.flags?.length ? `<h3>The final check flagged ${out.flags.length} frame${out.flags.length > 1 ? "s" : ""}</h3>
       <ul>${out.flags.map((f) => `<li>Build ${f.build + 1}: ${esc(f.issue)}</li>`).join("")}</ul>` : mp4 ? `<div class="okmsg">The final frame check found no problems.</div>` : ""}
+    <div id="patchbox"></div>
     <p class="muted small">Download your files now: the finished video is kept only in this browser. Remember brand@ontariotechu.ca asks to be contacted before the Ontario Tech name or logo is used in a project.</p>`;
   document.getElementById("rerender").onclick = () => { job._error = null; startStage(job, "render"); jobView(job.id); };
+  patchPanel(job, document.getElementById("patchbox"));
   document.getElementById("back").onclick = async () => { await api("PATCH", `/api/jobs/${job.id}`, { status: "review-slides" }); jobView(job.id); };
 }
 
@@ -721,7 +730,7 @@ async function usersView() {
 async function keysView() {
   $app.innerHTML = `<div class="eyebrow">Admin</div><h1>API keys</h1><div id="k">${loading("Loading keys")}</div>`;
   const { keys } = await api("GET", "/api/admin/keys");
-  const NAMES = { anthropic: "Anthropic (Claude)", assemblyai: "AssemblyAI (transcription)" };
+  const NAMES = { anthropic: "Anthropic (Claude)", assemblyai: "AssemblyAI (transcription)", elevenlabs: "ElevenLabs (voice patching)" };
   const table = (provider) => {
     const mine = keys.filter((k) => (k.provider || "anthropic") === provider);
     return `<h2>${NAMES[provider]}</h2>
@@ -731,17 +740,18 @@ async function keysView() {
       <td>${k.active ? '<span class="status done">Active</span>' : `<button class="secondary" data-act="use">Make active</button>`}</td>
       <td><button class="link" data-act="del">Remove</button></td></tr>`).join("") ||
       `<tr><td colspan="5" class="muted">${provider === "anthropic" ? "No key yet. Nobody can make videos until you add one."
+        : provider === "elevenlabs" ? "No key yet. Needed only for the optional Voice feature. Give the key two permissions: Text to Speech (Access) and Voices (Write); leave the rest off and don't restrict it by IP."
         : "No key yet. Needed only if Settings → Transcription is set to AssemblyAI."}</td></tr>`}</tbody></table>`;
   };
   document.getElementById("k").outerHTML = `
     <p class="muted">Keys are encrypted on the server and never sent to anyone's browser. Every call uses the active key for its service and is metered on the Usage page.</p>
-    ${table("anthropic")}${table("assemblyai")}
+    ${table("anthropic")}${table("assemblyai")}${table("elevenlabs")}
     <div id="m"></div>
     <h2>Add a key</h2>
     <form id="add" class="card"><div class="grid g3">
-      <label>Service<select name="provider"><option value="anthropic">Anthropic (Claude)</option><option value="assemblyai">AssemblyAI (transcription)</option></select></label>
+      <label>Service<select name="provider"><option value="anthropic">Anthropic (Claude)</option><option value="assemblyai">AssemblyAI (transcription)</option><option value="elevenlabs">ElevenLabs (voice patching)</option></select></label>
       <label>Label<input name="label" placeholder="TLC budget key" required></label>
-      <label>API key<input name="key" type="password" autocomplete="off" placeholder="sk-ant-… or AssemblyAI key" required></label></div>
+      <label>API key<input name="key" type="password" autocomplete="off" placeholder="sk-ant-…, AssemblyAI or ElevenLabs key" required></label></div>
       <div class="actions"><button>Add key</button></div></form>`;
   const m = document.getElementById("m");
   $app.querySelectorAll("tr[data-id]").forEach((tr) => {
@@ -796,6 +806,19 @@ async function settingsView() {
       <label>AssemblyAI prices <span class="muted">(USD per hour of audio, by model; key terms add a per-hour charge)</span>
         <textarea name="transcriptionPrices" class="mono" rows="7">${esc(JSON.stringify(s.transcriptionPrices, null, 2))}</textarea></label>
       </div></div>
+    <div class="card"><h3>Voice patching (ElevenLabs)</h3>
+      <p class="small muted">Each person can turn on an AI copy of their own voice on their Voice page, then use it to re-say a line of their narration instead of re-recording. Their sample goes to ElevenLabs once to make the voice and isn't kept here. Needs an ElevenLabs key under API keys.</p>
+      <label class="switch"><input type="checkbox" name="allowVoice" ${s.allowVoice !== false ? "checked" : ""}>
+        <span>Allow people to set up and use their AI voice <span class="muted">(turning this off blocks new voices and patches; existing voices stay until each person deletes theirs)</span></span></label>
+      <div class="grid g2">
+      <label>ElevenLabs model
+        <select name="elevenlabsModel">${[["eleven_multilingual_v2", "Multilingual v2 — most natural, uses the surrounding sentences for flow"],
+          ["eleven_v3", "Eleven v3 — most expressive"], ["eleven_turbo_v2_5", "Turbo v2.5 — half price, slightly flatter"], ["eleven_flash_v2_5", "Flash v2.5 — half price, fastest"]]
+          .concat(["eleven_multilingual_v2", "eleven_v3", "eleven_turbo_v2_5", "eleven_flash_v2_5"].includes(s.elevenlabsModel) ? [] : [[s.elevenlabsModel, s.elevenlabsModel]])
+          .map(([v, l]) => `<option value="${esc(v)}" ${s.elevenlabsModel === v ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>
+      <label>ElevenLabs prices <span class="muted">(USD per 1,000 characters, by model)</span>
+        <textarea name="voicePrices" class="mono" rows="6">${esc(JSON.stringify(s.voicePrices, null, 2))}</textarea></label>
+      </div></div>
     <div class="card"><h3>Prices (USD per million tokens)</h3>
       <p class="small muted">Used to work out costs from each response's token counts. Update these if Anthropic's prices change. Haiku's "long" prices apply when a prompt is over its threshold.</p>
       <textarea name="prices" class="mono" rows="14">${esc(JSON.stringify(s.prices, null, 2))}</textarea></div>
@@ -820,13 +843,228 @@ async function settingsView() {
       const body = { monthlyCapUsd: f.monthlyCapUsd, defaultUserMonthlyLimitUsd: f.defaultUserMonthlyLimitUsd,
         defaultUserMonthlyVideoLimit: f.defaultUserMonthlyVideoLimit, asrModel: f.asrModel, stageModels: {}, prices: JSON.parse(f.prices),
         showCost: f.showCost === "on", asrProvider: f.asrProvider, transcriptionPrices: JSON.parse(f.transcriptionPrices),
-        approvalMode: f.approvalMode, approvalThresholdUsd: f.approvalThresholdUsd, allowAdvanced: f.allowAdvanced === "on" };
+        approvalMode: f.approvalMode, approvalThresholdUsd: f.approvalThresholdUsd, allowAdvanced: f.allowAdvanced === "on",
+        allowVoice: f.allowVoice === "on", elevenlabsModel: f.elevenlabsModel, voicePrices: JSON.parse(f.voicePrices) };
       for (const [k] of stages) body.stageModels[k] = f[`stage:${k}`];
       await api("PUT", "/api/admin/settings", body);
       m.innerHTML = `<div class="okmsg">Settings saved.</div>`;
       checkAsrKey();
     } catch (e) { showErr(m, e); }
   };
+}
+
+// ---------------- voice (optional AI voice for patching lines) ----------------
+const patchMod = () => import("./pipeline/patch.js");
+const b64 = (bytes) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
+const md = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").split(/\n\n/).map((p) => `<p>${p}</p>`).join("");
+let voicePoll = null;
+const patchOpen = new Set(); // videos whose "Fix a line" panel is open
+
+async function voiceView() {
+  $app.innerHTML = `<div class="eyebrow">Your account</div><h1>Voice</h1><div id="v">${loading("Loading")}</div>`;
+  const v = await api("GET", "/api/voice/me");
+  const vo = v.voice;
+  const el = document.getElementById("v");
+  const per = (n) => money((n / 1000) * v.pricePer1kChars, 3);
+  const scriptHtml = `<details class="script"><summary>The sample script (about 4 minutes to read)</summary>
+      <ul class="small">${RECORDING_TIPS.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+      <p class="small muted">Words in <b>bold</b> are stressed: lean on them a little more than feels natural.</p>
+      ${SAMPLE_SCRIPT.map(([h, t], i) => `<h4>${i + 1}. ${esc(h)}</h4>${md(t)}`).join("")}</details>`;
+  const uploadForm = (replacing) => `<form id="sample" class="sub">
+      ${scriptHtml}
+      <label>${replacing ? "New sample" : "Your recording of the script"} <span class="muted">(M4A, MP3 or WAV, 1–10 minutes, under 10 MB)</span>
+        <input type="file" name="sample" accept="audio/*,.m4a,.mp3,.wav" required></label>
+      <label class="switch"><input type="checkbox" name="removeNoise"><span>Remove background noise <span class="muted">(only if the room was noisy; it can make a clean recording sound worse)</span></span></label>
+      <label class="switch"><input type="checkbox" name="consent" required><span>${esc(v.consentText)}</span></label>
+      <div id="sm"></div>
+      <div class="actions"><button>${replacing ? "Replace my voice" : "Create my voice"}</button>
+        ${replacing ? `<button type="button" class="link" id="cancelrep">Cancel</button>` : ""}</div></form>`;
+
+  el.innerHTML = `<p>Fix a line in a video without re-recording: you type what you meant to say, your AI voice says it, and it's spliced into your narration in place of the old line. It's optional and stays off unless you turn it on.</p>
+    ${v.available ? "" : `<div class="warn">${esc(v.reason)}</div>`}
+    <div class="card"><label class="switch big"><input type="checkbox" id="vonoff" ${vo.enabled ? "checked" : ""} ${v.available || vo.enabled ? "" : "disabled"}>
+      <span><b>Use my AI voice to fix lines</b> <span class="muted">(${vo.enabled ? "on: a “Fix a line” panel appears on your videos" : "off"})</span></span></label></div>
+    ${vo.enabled ? `
+    <div class="card"><h3>Your voice</h3><div id="vstate">${
+      vo.status === "creating" ? `<div class="runhead">${loader}<span>Making your voice with ElevenLabs. This usually takes under a minute.</span></div>`
+      : vo.hasVoice ? `<p>Made from <b>${esc(vo.sampleName || "your sample")}</b>${vo.sampleSeconds ? ` (${fmtT(vo.sampleSeconds)})` : ""} on ${when(vo.createdAt)}${vo.removedNoise ? ", with background noise removed" : ""}.</p>
+          ${vo.error ? `<div class="err">The last attempt to replace it failed: ${esc(vo.error)}</div>` : ""}
+          <div class="actions"><button class="secondary" id="replace">Replace with a new sample</button><button class="danger" id="vdel">Delete my voice</button></div>
+          <div id="repbox"></div>`
+      : `${vo.error ? `<div class="err">${esc(vo.error)}</div>` : ""}
+          <p>To make your voice, record yourself reading the sample script below, then upload it. 2 to 5 minutes of clear speech works best.</p>${v.available ? uploadForm(false) : ""}`}</div>
+      <p class="small muted">Your sample is sent to ElevenLabs once to make the voice and isn't kept on this site. The voice is kept in the TLC's ElevenLabs account until you delete it, and only you can use it.</p></div>
+    ${vo.hasVoice ? `<div class="card"><h3>How it sounds</h3>
+      <div class="grid g2">
+        ${[["stability", "Stability", 0, 1, 0.05, "Lower is more expressive, higher is steadier"], ["similarity", "Similarity to your sample", 0, 1, 0.05, "Higher sticks closer to your sample"],
+           ["style", "Style exaggeration", 0, 1, 0.05, "Keep near 0 for narration"], ["speed", "Speed", 0.7, 1.2, 0.01, "1 is your sample's pace"]]
+          .map(([k, l, lo, hi, step, hint]) => `<label>${l} <b id="out-${k}">${vo.settings[k]}</b><input type="range" data-set="${k}" min="${lo}" max="${hi}" step="${step}" value="${vo.settings[k]}">
+            <span class="small muted">${hint}</span></label>`).join("")}
+      </div>
+      <div class="actions"><button class="secondary" id="vsave">Save settings</button><button class="link" id="vreset">Back to defaults</button></div>
+      <label>Try it <span class="muted">(each try costs about ${per(120)})</span>
+        <textarea id="vtest" rows="2" maxlength="600">Okay, so let's check our answer. It's not the first step that matters most here, it's the **last** one.</textarea></label>
+      <div class="actions"><button id="vplay">Say it</button><span class="small muted" id="vcost"></span></div><div id="vtake"></div></div>` : ""}`
+    : vo.hasVoice ? `<div class="card"><p>Your voice is turned off, so it can't be used, but it's still kept at ElevenLabs.</p>
+        <div class="actions"><button class="danger" id="vdel">Delete my voice</button></div></div>` : ""}
+    <div id="vm"></div>`;
+
+  const vm = document.getElementById("vm");
+  document.getElementById("vonoff").onchange = async (ev) => {
+    try { await api("PUT", "/api/voice/me", { enabled: ev.target.checked }); voiceView(); } catch (e) { showErr(vm, e); }
+  };
+  const del = document.getElementById("vdel");
+  if (del) del.onclick = async () => {
+    if (!confirm("Delete your AI voice? It's removed from ElevenLabs. Lines you've already patched stay patched.")) return;
+    try { await api("POST", "/api/voice/delete", {}); voiceView(); } catch (e) { showErr(vm, e); }
+  };
+  const wireUpload = (form) => {
+    form.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const fd = new FormData(form), file = fd.get("sample"), sm = form.querySelector("#sm");
+      try {
+        if (!file?.size) throw new Error("Choose your recording.");
+        if (file.size > 10 * 1024 * 1024) throw new Error("That file is over 10 MB. Export it as M4A or MP3, or trim it to about 5 minutes.");
+        const dur = await audioDuration(file);
+        if (dur && dur < 45) throw new Error("That recording is under a minute. Read the whole sample script (about 4 minutes).");
+        form.querySelector("button").disabled = true;
+        const bytes = new Uint8Array(await file.arrayBuffer()), PART = 3 * 1024 * 1024, parts = Math.ceil(bytes.length / PART);
+        sm.innerHTML = loading("Uploading your sample");
+        const { id } = await api("POST", "/api/voice/sample/start", { parts, durationSec: Math.round(dur), sampleName: file.name, mime: file.type || "audio/mpeg",
+          consent: fd.get("consent") === "on", removeNoise: fd.get("removeNoise") === "on" });
+        for (let n = 0; n < parts; n++) await api("POST", "/api/voice/sample/part", { id, n, data: b64(bytes.subarray(n * PART, (n + 1) * PART)) });
+        await api("POST", "/api/voice/sample/run", { id });
+        sm.innerHTML = loading("Making your voice with ElevenLabs");
+        const t0 = Date.now();
+        while (true) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const r = await api("GET", `/api/voice/sample/result?id=${encodeURIComponent(id)}`);
+          if (r.status === "done") break;
+          if (r.status === "error") throw new Error(r.error);
+          if (Date.now() - t0 > 5 * 60 * 1000) throw new Error("ElevenLabs is taking a long time. Check back on this page in a few minutes.");
+        }
+        voiceView();
+      } catch (e) { form.querySelector("button").disabled = false; showErr(sm, e); }
+    };
+  };
+  const sf = document.getElementById("sample");
+  if (sf) wireUpload(sf);
+  const rep = document.getElementById("replace");
+  if (rep) rep.onclick = () => {
+    const box = document.getElementById("repbox");
+    box.innerHTML = uploadForm(true);
+    wireUpload(document.getElementById("sample"));
+    document.getElementById("cancelrep").onclick = () => (box.innerHTML = "");
+  };
+  if (vo.status === "creating") {
+    clearInterval(voicePoll);
+    voicePoll = setInterval(async () => {
+      if (!location.hash.startsWith("#/voice")) return clearInterval(voicePoll);
+      const r = await api("GET", "/api/voice/me").catch(() => null);
+      if (r && r.voice.status !== "creating") { clearInterval(voicePoll); voiceView(); }
+    }, 4000);
+  }
+  // settings
+  const vals = () => Object.fromEntries([...document.querySelectorAll("[data-set]")].map((r) => [r.dataset.set, Number(r.value)]));
+  document.querySelectorAll("[data-set]").forEach((r) => (r.oninput = () => (document.getElementById(`out-${r.dataset.set}`).textContent = r.value)));
+  const save = document.getElementById("vsave");
+  if (save) save.onclick = async () => {
+    try { await api("PUT", "/api/voice/me", { settings: vals() }); vm.innerHTML = `<div class="okmsg">Settings saved.</div>`; } catch (e) { showErr(vm, e); }
+  };
+  const reset = document.getElementById("vreset");
+  if (reset) reset.onclick = async () => {
+    try { await api("PUT", "/api/voice/me", { settings: { stability: 0.5, similarity: 0.8, style: 0, speed: 1 } }); voiceView(); } catch (e) { showErr(vm, e); }
+  };
+  const play = document.getElementById("vplay");
+  if (play) play.onclick = async () => {
+    const out = document.getElementById("vtake");
+    try {
+      play.disabled = true;
+      await api("PUT", "/api/voice/me", { settings: vals() });
+      out.innerHTML = loading("Saying it in your voice");
+      const text = document.getElementById("vtest").value.replace(/\*\*/g, "");
+      const r = await api("POST", "/api/voice/speak", { text });
+      const bytes = Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0));
+      const url = URL.createObjectURL(new Blob([bytes], { type: r.mime }));
+      out.innerHTML = `<audio controls autoplay src="${url}"></audio>`;
+      document.getElementById("vcost").textContent = `${r.chars} characters · ${money(r.costUsd, 4)}`;
+    } catch (e) { showErr(out, e); } finally { play.disabled = false; }
+  };
+}
+
+// "Fix a line" panel shown on a video when the person's voice is on and ready.
+async function patchPanel(job, host) {
+  if (!host) return;
+  let v;
+  try { v = await api("GET", "/api/voice/me"); } catch { return; }
+  if (!(v.available && v.voice.enabled && v.voice.hasVoice && v.voice.status === "ready")) return;
+  const chunks = job.state.chunks || [];
+  if (!chunks.length) return;
+  const patches = job.state.patches || [];
+  const per = (n) => (n / 1000) * v.pricePer1kChars;
+  const line = (c) => String(c.caption ?? c.text ?? "").replace(/\s+/g, " ").trim();
+  host.innerHTML = `<details class="card patch" ${patchOpen.has(job.id) ? "open" : ""}><summary><b>Fix a line with your AI voice</b>
+      <span class="muted">— re-say a sentence without re-recording${patches.length ? ` · ${patches.length} line${patches.length > 1 ? "s" : ""} fixed` : ""}</span></summary>
+    <p class="small muted">Choose the line, type what you meant to say, and pick the best of three takes. Each line is cut at the pauses around it, so keep the fix to the same sentence. Three takes of a typical sentence cost about ${money(per(3 * 110), 3)}.</p>
+    ${patches.length ? `<p class="small">Fixed so far: ${patches.map((p) => `“${esc(p.to)}”`).join("; ")}. <button class="link" id="undoall">Undo all fixes</button></p>` : ""}
+    <div class="plist">${chunks.map((c, i) => `<div class="pline ${c.patched ? "patched" : ""}" data-i="${i}">
+      <span class="t">${fmtT(c.start)}</span><span class="txt">${esc(line(c))}${c.patched ? ' <span class="pill">AI voice</span>' : ""}</span>
+      <button class="secondary small-btn" data-fix="${i}">Fix this line</button></div>`).join("")}</div>
+    <div id="peditor"></div><div id="pm"></div></details>`;
+  const details = host.querySelector("details");
+  details.ontoggle = () => (details.open ? patchOpen.add(job.id) : patchOpen.delete(job.id));
+  const pm = host.querySelector("#pm");
+  const save = (state) => api("PATCH", `/api/jobs/${job.id}`, { state });
+  const after = async () => { (await pipeline()).forgetAudio(job.id); patchOpen.add(job.id); jobView(job.id, true); };
+  const undo = host.querySelector("#undoall");
+  if (undo) undo.onclick = async () => {
+    if (!confirm("Put back your original recording and transcript? Every fixed line goes back to how you said it.")) return;
+    try { await (await patchMod()).undoAll(job, save); await after(); } catch (e) { showErr(pm, e); }
+  };
+  host.querySelectorAll("[data-fix]").forEach((b) => (b.onclick = async () => {
+    const i = Number(b.dataset.fix), c = chunks[i];
+    host.querySelectorAll(".pline").forEach((p) => p.classList.toggle("on", Number(p.dataset.i) === i));
+    const ed = host.querySelector("#peditor");
+    const P = await patchMod();
+    ed.innerHTML = `<div class="sub"><div class="eyebrow">Line at ${fmtT(c.start)}</div>
+      <p>${esc(line(c))}</p><div id="orig">${loading("Loading your recording")}</div>
+      <label>What it should say <span class="muted">(write numbers and symbols the way you'd say them)</span>
+        <textarea id="ptext" rows="3" maxlength="600">${esc(line(c))}</textarea></label>
+      <div class="actions"><button id="ptakes">Make 3 takes</button><span class="small muted" id="pest"></span><button class="link" id="pclose">Close</button></div>
+      <div id="takes"></div></div>`;
+    const ta = ed.querySelector("#ptext"), est = ed.querySelector("#pest");
+    const upd = () => (est.textContent = `about ${money(per(3 * ta.value.trim().length), 4)}`);
+    ta.oninput = upd; upd();
+    ed.querySelector("#pclose").onclick = () => { ed.innerHTML = ""; host.querySelectorAll(".pline").forEach((p) => p.classList.remove("on")); };
+    try { ed.querySelector("#orig").innerHTML = `<audio controls src="${await P.lineClip(job, i)}"></audio> <span class="small muted">how it sounds now</span>`; }
+    catch (e) { showErr(ed.querySelector("#orig"), e); }
+    ed.querySelector("#ptakes").onclick = async () => {
+      const text = ta.value.replace(/\s+/g, " ").trim();
+      const box = ed.querySelector("#takes"), btn = ed.querySelector("#ptakes");
+      if (!text) return;
+      btn.disabled = true;
+      box.innerHTML = "";
+      const takes = [];
+      try {
+        for (let k = 0; k < 3; k++) {
+          box.insertAdjacentHTML("beforeend", `<div class="take" id="take-${k}">${loading(`Take ${k + 1} of 3`)}</div>`);
+          const t = await P.makeTake(job, i, text);
+          takes.push(t);
+          box.querySelector(`#take-${k}`).innerHTML = `<b>Take ${k + 1}</b> <audio controls src="${t.url}"></audio>
+            <span class="small muted">${t.seconds.toFixed(1)} s</span> <button class="secondary small-btn" data-use="${k}">Use this take</button>`;
+          const jc = document.getElementById("jobcost"); if (jc) jc.textContent = money(job.costUsd);
+        }
+      } catch (e) { showErr(pm, e); }
+      btn.disabled = false; btn.textContent = "Make 3 more";
+      box.querySelectorAll("[data-use]").forEach((u) => (u.onclick = async () => {
+        u.disabled = true;
+        try {
+          await P.applyTake(job, i, takes[Number(u.dataset.use)], text, save);
+          await after();
+        } catch (e) { u.disabled = false; showErr(pm, e); }
+      }));
+    };
+  }));
 }
 
 boot().catch((e) => { $app.innerHTML = `<div class="err">${esc(e.message)}</div>`; });

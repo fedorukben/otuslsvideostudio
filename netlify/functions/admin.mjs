@@ -3,6 +3,7 @@ import {
   users, json, bad, body, requireUser, publicUser, emailKey, hashPassword, validPassword, nowIso,
   getSettings, saveSettings, encrypt, newId, usageForMonth, jobsForMonth, monthOf, PROVIDERS, jobsStore, costModel, estimateVideoCost,
 } from "../lib/lib.mjs";
+import { deleteVoice } from "../lib/voice.mjs";
 
 export default async (req) => {
   const { user: admin, error } = await requireUser(req, "admin");
@@ -56,6 +57,7 @@ export default async (req) => {
       if (req.method === "DELETE" && id) {
         const email = emailKey(decodeURIComponent(id));
         if (email === admin.email) return bad("You can't delete yourself");
+        await deleteVoice(email).catch((e) => console.error("voice cleanup", e));
         await users().delete(email);
         return json({ ok: true });
       }
@@ -71,7 +73,8 @@ export default async (req) => {
         const provider = PROVIDERS.includes(b.provider) ? b.provider : "anthropic";
         if (provider === "anthropic" && !key.startsWith("sk-ant-")) return bad("That doesn't look like an Anthropic API key (it should start with sk-ant-)");
         if (provider === "assemblyai" && !/^[A-Za-z0-9_-]{20,}$/.test(key)) return bad("That doesn't look like an AssemblyAI API key");
-        const k = { id: newId(), provider, label: b.label || (provider === "assemblyai" ? "AssemblyAI key" : "Anthropic key"),
+        if (provider === "elevenlabs" && !/^[A-Za-z0-9_-]{20,}$/.test(key)) return bad("That doesn't look like an ElevenLabs API key");
+        const k = { id: newId(), provider, label: b.label || { assemblyai: "AssemblyAI key", elevenlabs: "ElevenLabs key" }[provider] || "Anthropic key",
           last4: key.slice(-4), enc: encrypt(key), active: !s.keys.some((x) => x.provider === provider && x.active),
           addedAt: nowIso(), addedBy: admin.email };
         s.keys.push(k);
@@ -153,6 +156,12 @@ export default async (req) => {
         }
         if (typeof b.showCost === "boolean") s.showCost = b.showCost;
         if (typeof b.allowAdvanced === "boolean") s.allowAdvanced = b.allowAdvanced;
+        if (typeof b.allowVoice === "boolean") s.allowVoice = b.allowVoice;
+        if (typeof b.elevenlabsModel === "string" && /^[a-z0-9_.-]{3,60}$/.test(b.elevenlabsModel)) s.elevenlabsModel = b.elevenlabsModel;
+        if (b.voicePrices && typeof b.voicePrices === "object") {
+          if (Object.values(b.voicePrices).some((v) => typeof v !== "number" || v < 0)) return bad("Voice prices must be numbers (USD per 1,000 characters)");
+          s.voicePrices = b.voicePrices;
+        }
         if (["none", "threshold", "always"].includes(b.approvalMode)) s.approvalMode = b.approvalMode;
         if (b.approvalThresholdUsd !== undefined) {
           const t = num(b.approvalThresholdUsd);
@@ -178,9 +187,9 @@ export default async (req) => {
       const [rows, jobs, s] = await Promise.all([usageForMonth(month), jobsForMonth(month), getSettings()]);
       if (url.searchParams.get("format") === "csv") {
         const head = ["timestamp", "user", "job_id", "job_title", "stage", "model", "input_tokens", "output_tokens",
-          "cache_write_tokens", "cache_read_tokens", "audio_seconds", "cost_usd"];
+          "cache_write_tokens", "cache_read_tokens", "audio_seconds", "characters", "cost_usd"];
         const lines = rows.map((r) => [r.ts, r.user, r.jobId, r.jobTitle, r.stage, r.model, r.input, r.output,
-          r.cacheWrite, r.cacheRead, r.audioSeconds ?? "", (r.costUsd || 0).toFixed(6)].map(csv).join(","));
+          r.cacheWrite, r.cacheRead, r.audioSeconds ?? "", r.characters ?? "", (r.costUsd || 0).toFixed(6)].map(csv).join(","));
         return new Response([head.join(","), ...lines].join("\n") + "\n", {
           headers: { "content-type": "text/csv", "content-disposition": `attachment; filename="sls-video-usage-${month}.csv"` },
         });
@@ -190,8 +199,8 @@ export default async (req) => {
       for (const r of rows) {
         const u = (byUser[r.user] ||= { user: r.user, costUsd: 0, calls: 0, videos: 0 });
         u.costUsd += r.costUsd || 0; u.calls++;
-        const st = (byStage[`${r.stage}|${r.model}`] ||= { stage: r.stage, model: r.model, costUsd: 0, calls: 0, input: 0, output: 0, audioSeconds: 0 });
-        st.audioSeconds += r.audioSeconds || 0;
+        const st = (byStage[`${r.stage}|${r.model}`] ||= { stage: r.stage, model: r.model, costUsd: 0, calls: 0, input: 0, output: 0, audioSeconds: 0, characters: 0 });
+        st.audioSeconds += r.audioSeconds || 0; st.characters += r.characters || 0;
         st.costUsd += r.costUsd || 0; st.calls++; st.input += (r.input || 0) + (r.cacheRead || 0) + (r.cacheWrite || 0); st.output += r.output || 0;
         const j = (byJob[r.jobId] ||= { jobId: r.jobId, title: r.jobTitle, user: r.user, costUsd: 0, calls: 0 });
         j.costUsd += r.costUsd || 0; j.calls++;

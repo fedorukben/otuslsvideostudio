@@ -22,6 +22,7 @@ async function audioFor(job) {
   return a;
 }
 export const forgetAudio = (jobId) => audioCache.delete(jobId);
+export { makeTake, applyTake, undoAll, lineClip } from "./patch.js";
 
 async function save(job, patch) {
   Object.assign(job, patch.title ? { title: patch.title } : {}, patch.status ? { status: patch.status } : {});
@@ -194,7 +195,7 @@ export async function render(job, ui, asrModel) {
   } catch (e) {
     ui.warn?.("This browser wouldn't store the finished video (a private window or full storage?). Download it now from this page; it will be gone if you reload.");
   }
-  await stepRun("Saving the result", () => save(job, { status: "done", state: { output: { name, duration: duration + 7.2, sizeBytes: mp4.size, renderedAt: new Date().toISOString(), flags, times: t } } }));
+  await stepRun("Saving the result", () => save(job, { status: "done", state: { patchedAfterRender: false, output: { name, duration: duration + 7.2, sizeBytes: mp4.size, renderedAt: new Date().toISOString(), flags, times: t } } }));
   return { mp4, srt, name, flags };
 }
 
