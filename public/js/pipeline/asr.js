@@ -22,15 +22,31 @@ export async function loadASR(modelId = "Xenova/whisper-small.en", onProgress) {
         onProgress?.(vals.reduce((a, v) => a + v[0], 0) / vals.reduce((a, v) => a + v[1], 0));
       }
     };
+    const make = (device) => pipeline("automatic-speech-recognition", modelId, device === "webgpu"
+      ? { device, dtype: { encoder_model: "fp32", decoder_model_merged: "fp32" }, progress_callback }
+      : { device: "wasm", dtype: "q8", progress_callback });
     let device = "wasm";
     try { if (navigator.gpu && (await navigator.gpu.requestAdapter())) device = "webgpu"; } catch {}
-    const opts = device === "webgpu"
-      ? { device, dtype: { encoder_model: "fp32", decoder_model_merged: "q4" }, progress_callback }
-      : { device, dtype: "q8", progress_callback };
-    const pipe = await pipeline("automatic-speech-recognition", modelId, opts);
-    return async (samples16k) => {
-      const out = await pipe(samples16k, { language: undefined, return_timestamps: false });
+    let pipe;
+    try { pipe = await make(device); } catch (e) { if (device === "wasm") throw e; device = "wasm"; pipe = await make("wasm"); }
+
+    // Some browsers stall on the GPU path. If the first piece takes too long there, switch to the CPU path.
+    let first = true;
+    const run = async (samples) => {
+      const out = await pipe(samples, { return_timestamps: false });
       return String(out.text || "").trim();
+    };
+    return async (samples16k) => {
+      if (!first || device === "wasm") return run(samples16k);
+      first = false;
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("gpu-timeout")), 90_000));
+      try { return await Promise.race([run(samples16k), timeout]); }
+      catch (e) {
+        if (e.message !== "gpu-timeout") throw e;
+        device = "wasm";
+        pipe = await make("wasm");
+        return run(samples16k);
+      }
     };
   })();
   asrPromise.catch(() => { asrPromise = null; });

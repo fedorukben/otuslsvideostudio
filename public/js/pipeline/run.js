@@ -51,7 +51,7 @@ export async function analyse(job, ui, asrModel, asrProvider = "browser") {
     ui.step("Loading the speech model (first time only: about 250 MB)");
     const transcribe = await loadASR(asrModel, (p) => ui.progress(p, "Downloading speech model"));
     for (let i = 0; i < chunks.length; i++) {
-      ui.step(`Transcribing (${i + 1} of ${chunks.length})`);
+      ui.step(`Transcribing (${i + 1} of ${chunks.length})${i === 0 ? " — the first piece is the slowest" : ""}`);
       ui.progress(i / chunks.length, "Transcribing");
       chunks[i].text = await transcribe(slice(samples, chunks[i].start, chunks[i].end));
     }
