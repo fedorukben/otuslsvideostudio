@@ -611,6 +611,18 @@ async function usageView() {
       <div class="stat"><div class="k">Claude calls</div><div class="v">${u.calls}</div></div>
       <div class="stat"><div class="k">Average per video</div><div class="v">${u.byJob.length ? money(u.totalUsd / u.byJob.length) : "—"}</div></div>
     </div>
+    <h2>Cost estimates</h2>
+    <div class="card">
+      <p style="margin-top:0">New videos are estimated at <b>${money(u.estimates.base)} + ${money(u.estimates.perMin, 3)} per minute</b> of narration
+        (a 5-minute video: <b>${money(u.estimates.example5min)}</b>, including transcription if AssemblyAI is on).
+        ${u.estimates.n ? `Learned from <b>${u.estimates.n}</b> finished video${u.estimates.n > 1 ? "s" : ""}, weighted ${Math.round(u.estimates.weight * 100)}% on your data and the rest on the starting formula; it sharpens as more videos finish.`
+          : "No finished videos yet, so this is the starting formula. It starts learning from real costs as videos finish."}</p>
+      ${u.estimates.recent.length ? `<table><thead><tr><th>Finished video</th><th>Person</th><th class="num">Length</th><th class="num">Estimated</th><th class="num">Actual</th><th class="num">Difference</th></tr></thead><tbody>
+      ${u.estimates.recent.map((p) => { const d = p.estimate == null ? null : p.total - p.estimate;
+        return `<tr><td>${esc(p.title)}</td><td>${esc(p.owner)}</td><td class="num">${p.min.toFixed(1)} min</td><td class="num">${money(p.estimate)}</td>
+          <td class="num">${money(p.total)}</td><td class="num">${d == null ? "—" : `${d >= 0 ? "+" : "−"}${money(Math.abs(d))} (${p.estimate ? Math.round((d / p.estimate) * 100) : 0}%)`}</td></tr>`; }).join("")}
+      </tbody></table>` : ""}
+    </div>
     <h2>By person</h2>
     <table><thead><tr><th>User</th><th class="num">Videos</th><th class="num">Calls</th><th class="num">Spent</th></tr></thead><tbody>
     ${u.byUser.map((r) => `<tr><td>${esc(r.user)}</td><td class="num">${r.videos}</td><td class="num">${r.calls}</td><td class="num">${money(r.costUsd)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No usage yet.</td></tr>`}</tbody></table>
@@ -731,7 +743,7 @@ async function settingsView() {
     <label class="switch"><input type="checkbox" name="showCost" ${s.showCost !== false ? "checked" : ""}>
       <span>Show costs while making videos <span class="muted">(a live $ total as each Claude step finishes, plus the cost on each video. Admins always see costs on the Usage page.)</span></span></label><p class="small muted">When a cap is reached, new Claude calls are blocked until next month or until you raise it. A call already running finishes.</p></div>
     <div class="card"><h3>Approval</h3>
-      <p class="small muted">Whether an admin has to approve a video before it can spend anything. The estimate is rough: about $0.45 plus $0.04 per minute of narration, plus transcription if AssemblyAI is chosen. Admins' own videos are approved automatically.</p>
+      <p class="small muted">Whether an admin has to approve a video before it can spend anything. The estimate starts at about $0.46 plus $0.04 per minute of narration (plus transcription if AssemblyAI is chosen) and learns from the real cost of each finished video; see Usage → Cost estimates. Admins' own videos are approved automatically.</p>
       <label class="switch"><input type="radio" name="approvalMode" value="none" ${(s.approvalMode || "none") === "none" ? "checked" : ""}><span>No approval needed</span></label>
       <label class="switch"><input type="radio" name="approvalMode" value="threshold" ${s.approvalMode === "threshold" ? "checked" : ""}>
         <span>Approval when the estimate is over <input name="approvalThresholdUsd" type="number" min="0" step="0.05" value="${s.approvalThresholdUsd ?? 1}" style="width:100px;display:inline-block;margin:0 6px" aria-label="Approval threshold in dollars"> USD</span></label>

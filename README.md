@@ -50,7 +50,7 @@ Admins choose under **Settings → Transcription**:
 **Settings → Approval** decides whether an admin must approve a video before it can spend anything:
 
 - **No approval needed** (default).
-- **Approval when the estimate is over $X**: the site estimates each video's cost from the narration length (about $0.45 plus $0.04 a minute, plus transcription if AssemblyAI is on).
+- **Approval when the estimate is over $X**: the site estimates each video's cost from the narration length. It starts at about $0.46 plus $0.04 a minute (plus transcription if AssemblyAI is on) and learns from the real Claude cost of every finished video: a straight-line fit of cost against minutes, blended with the starting formula until there are enough videos (weight n/(n+5)). **Usage → Cost estimates** shows the current formula and estimated-versus-actual for recent videos. Each video records the estimate it was given.
 - **Every video needs approval.**
 
 Waiting videos appear under **Approvals** (with a count in the menu). An admin approves with a budget for that video (suggested at 1.5 times the estimate; blank means no per-video limit) or declines with a note the person sees. The server blocks every Claude and AssemblyAI call for a video that is waiting, declined, or over its approved budget, and budgets can be raised afterwards. Admins' own videos are approved automatically.

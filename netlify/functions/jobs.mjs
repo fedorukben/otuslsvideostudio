@@ -1,7 +1,7 @@
 // /api/jobs — a user's videos. The audio and the finished MP4 never come here;
 // only titles, settings, the transcript text and the slide spec are stored.
 import {
-  jobsStore, json, bad, body, requireUser, getSettings, newId, nowIso, monthOf, jobsForMonth, checkSpend, activeKey, estimateVideoCost,
+  jobsStore, json, bad, body, requireUser, getSettings, newId, nowIso, monthOf, jobsForMonth, checkSpend, activeKey, estimateVideoCost, costModel,
 } from "../lib/lib.mjs";
 
 const STATUSES = ["awaiting-approval", "new", "analysing", "review-transcript", "planning", "review-slides", "rendering", "done", "failed"];
@@ -41,13 +41,15 @@ export default async (req) => {
       const capMsg = await checkSpend(user);
       if (capMsg) return bad(capMsg, 429);
       const durationSec = Math.max(0, Math.min(4 * 3600, Number(b.durationSec) || 0));
-      const estimateUsd = estimateVideoCost(s, durationSec);
+      const model = await costModel();
+      const estimateUsd = estimateVideoCost(s, durationSec, model);
       const needs = s.approvalMode === "always" || (s.approvalMode === "threshold" && estimateUsd > (s.approvalThresholdUsd ?? 1));
       const auto = needs && user.role === "admin"; // admins approve their own videos
       const approval = needs ? {
         required: true, status: auto ? "approved" : "pending", estimateUsd, limitUsd: auto ? null : null,
         requestedAt: nowIso(), ...(auto ? { decidedBy: user.email, decidedAt: nowIso(), note: "Admin's own video" } : {}),
       } : { required: false, estimateUsd };
+      approval.estimateModel = { base: model.base, perMin: model.perMin, n: model.n };
       const job = {
         id: newId(), owner: user.email, ownerName: user.name, title: String(b.title).slice(0, 120), durationSec, approval,
         eyebrow: String(b.eyebrow || "").slice(0, 60), subtitle: String(b.subtitle || "").slice(0, 160),

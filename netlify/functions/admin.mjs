@@ -1,7 +1,7 @@
 // /api/admin/* — users, API keys, settings, metering. Admin role only.
 import {
   users, json, bad, body, requireUser, publicUser, emailKey, hashPassword, validPassword, nowIso,
-  getSettings, saveSettings, encrypt, newId, usageForMonth, jobsForMonth, monthOf, PROVIDERS, jobsStore,
+  getSettings, saveSettings, encrypt, newId, usageForMonth, jobsForMonth, monthOf, PROVIDERS, jobsStore, costModel, estimateVideoCost,
 } from "../lib/lib.mjs";
 
 export default async (req) => {
@@ -197,7 +197,14 @@ export default async (req) => {
       }
       for (const j of jobs) (byUser[j.owner] ||= { user: j.owner, costUsd: 0, calls: 0, videos: 0 }).videos++;
       for (const j of jobs) if (byJob[j.id]) Object.assign(byJob[j.id], { status: j.status, createdAt: j.createdAt });
+      const cm = await costModel();
+      const estimates = {
+        base: cm.base, perMin: cm.perMin, n: cm.n, weight: cm.weight ?? 0, source: cm.source,
+        example5min: estimateVideoCost(s, 300, cm),
+        recent: (cm.points || []).sort((a, b) => (b.finishedAt || "").localeCompare(a.finishedAt || "")).slice(0, 20),
+      };
       return json({
+        estimates,
         month, totalUsd: total, capUsd: s.monthlyCapUsd, calls: rows.length, videos: jobs.length,
         byUser: Object.values(byUser).sort((a, b) => b.costUsd - a.costUsd),
         byStage: Object.values(byStage).sort((a, b) => b.costUsd - a.costUsd),

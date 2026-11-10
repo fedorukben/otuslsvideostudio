@@ -221,11 +221,41 @@ export const newId = () => crypto.randomBytes(9).toString("base64url");
 
 // Rough cost of one video before it's made: slide planning (Opus) dominates; longer narration
 // means bigger prompts and more slides. Transcription is added if AssemblyAI is chosen.
-export function estimateVideoCost(s, durationSec) {
+export const DEFAULT_COST_MODEL = { base: 0.46, perMin: 0.039, n: 0, source: "default" };
+
+// Learns cost = base + perMin × minutes from finished videos (Claude cost only; transcription is added separately
+// because its price is known exactly). With few videos it leans on the default; with more, on the data.
+export async function costModel() {
+  const st = jobsStore();
+  const { blobs } = await st.list();
+  const jobs = (await Promise.all(blobs.map((b) => st.get(b.key, { type: "json" }))))
+    .filter((j) => j && j.status === "done" && j.durationSec > 0 && (j.costUsd || 0) > 0);
+  if (!jobs.length) return { ...DEFAULT_COST_MODEL, points: [] };
+  // transcription spend per job (from usage logs) so it can be taken out
+  const months = new Set(jobs.map((j) => (j.createdAt || "").slice(0, 7)));
+  const trans = {};
+  for (const m of months) for (const r of await usageForMonth(m)) if (r.stage === "transcribe") trans[r.jobId] = (trans[r.jobId] || 0) + (r.costUsd || 0);
+  const pts = jobs.map((j) => ({ id: j.id, title: j.title, owner: j.owner, min: j.durationSec / 60, claude: (j.costUsd || 0) - (trans[j.id] || 0),
+    total: j.costUsd || 0, estimate: j.approval?.estimateUsd ?? null, finishedAt: j.updatedAt }))
+    .filter((p) => p.claude > 0);
+  const n = pts.length;
+  if (!n) return { ...DEFAULT_COST_MODEL, points: [] };
+  const mx = pts.reduce((a, p) => a + p.min, 0) / n, my = pts.reduce((a, p) => a + p.claude, 0) / n;
+  const sxx = pts.reduce((a, p) => a + (p.min - mx) ** 2, 0), sxy = pts.reduce((a, p) => a + (p.min - mx) * (p.claude - my), 0);
+  // Lengths too similar to tell a slope from noise: keep the default slope, fit only the base.
+  let perMin = n >= 3 && sxx >= 4 ? Math.max(0, sxy / sxx) : DEFAULT_COST_MODEL.perMin;
+  let base = Math.max(0.05, my - perMin * mx);
+  const w = n / (n + 5); // trust the data more as it grows
+  return {
+    base: +(w * base + (1 - w) * DEFAULT_COST_MODEL.base).toFixed(4),
+    perMin: +(w * perMin + (1 - w) * DEFAULT_COST_MODEL.perMin).toFixed(4),
+    n, source: "learned", weight: +w.toFixed(2), points: pts,
+  };
+}
+
+export function estimateVideoCost(s, durationSec, model = DEFAULT_COST_MODEL) {
   const min = Math.max(0.5, (Number(durationSec) || 300) / 60);
-  let usd = 0.35 + 0.035 * min        // slide planning (Opus)
-    + 0.10                            // automatic fixes and one round of review comments (Sonnet)
-    + 0.004 * min + 0.01;             // math pass and final frame check (Haiku)
+  let usd = model.base + model.perMin * min;  // Claude: planning, fixes, review rounds, math pass, frame check
   if (s.asrProvider === "assemblyai") {
     const tp = s.transcriptionPrices || {};
     usd += (min / 60) * ((tp.perHour?.["universal-3-5-pro"] ?? 0.21) + (tp.keytermsPerHour ?? 0.05));
