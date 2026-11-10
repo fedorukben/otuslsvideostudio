@@ -268,7 +268,7 @@ function locate(pcm, chunks, f) {
     const w1 = atEnd ? null : c.words[wt[f.start + f.len].wi];
     const a = quietest(pcm, Math.max(prevEnd, w0.s - 0.12), w0.s + 0.02);
     const b = atEnd ? quietest(pcm, c.end, Math.min(nextStart, c.end + 0.3)) : quietest(pcm, Math.max(a + 0.05, w1.s - 0.15), w1.s + 0.01);
-    return { a, b: Math.max(b, a + 0.05), approx: false };
+    return { a, b: Math.max(b, a + 0.05), approx: false, restartAt: w1 ? w1.s : null };
   }
   // Estimated: place by the words' share of the line, then snap to a nearby short pause if there is one.
   const t = f.basis ? toks(f.basis === "caption" ? c.caption : c.text) : [];
@@ -315,30 +315,49 @@ function cutPcm(pcm, a, b) {
 function usualGap(chunks) {
   const gaps = chunks.slice(1).map((c, k) => c.start - chunks[k].end).filter((g) => g > 0.05 && g < 3).sort((x, y) => x - y);
   const med = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0.5;
-  return Math.min(0.8, Math.max(0.3, med));
+  return Math.min(0.6, Math.max(0.3, med * 0.8)); // a touch tighter than the narrator's median pause
 }
-function quietRun(pcm, t, dir, limit) {
-  // how far silence extends from t (dir -1 = backwards, +1 = forwards), stopping at speech or `limit`
-  const db = frames(pcm);
-  const peak = db.reduce((m, x) => Math.max(m, x), -200);
-  const thr = Math.max(-50, peak - 35);
-  let i = Math.round(t * 100);
-  const stop = Math.round(limit * 100);
-  if (dir < 0) { while (i - 1 >= Math.max(0, stop) && db[i - 1] < thr) i--; }
-  else { while (i < Math.min(db.length, stop) && db[i] < thr) i++; }
-  return i / 100;
-}
+const framesCache = new WeakMap();
+const framesOf = (pcm) => { if (!framesCache.has(pcm)) framesCache.set(pcm, frames(pcm)); return framesCache.get(pcm); };
+const pct = (arr, q) => { const v = [...arr].sort((x, y) => x - y); return v.length ? v[Math.min(v.length - 1, Math.floor(q * v.length))] : -100; };
+
+// The join after a cut should sound like a normal pause, so everything between the end of the speech before
+// the cut and the start of the restart that isn't speech (room noise, a breath, a quiet "agghhh") goes too.
+// "Speech" is measured against the narrator's own level in this line, not a fixed threshold, so it works on
+// noisy phone recordings. What's kept of the pause is clean room tone right next to the speech on each side.
 export function tightenCut(pcm, chunks, f) {
-  const c = chunks[f.i], dur = pcm.length / SR;
-  const s1 = quietRun(pcm, f.a, -1, Math.max(0, f.a - 3));   // silence before the cut starts here
-  const e2 = quietRun(pcm, f.b, +1, Math.min(dur, f.b + 3));      // and after it ends here
-  const before = f.a - s1, after = e2 - f.b, total = before + after;
+  const c = chunks[f.i], dur = pcm.length / SR, db = framesOf(pcm), n = db.length;
+  const fr = (t) => Math.max(0, Math.min(n - 1, Math.round(t * 100)));
+  const near = db.subarray(fr(Math.min(c.start, f.a) - 1), fr(Math.max(c.end, f.b) + 1));
+  const speechThr = pct(near, 0.9) - 18;                 // well below normal speech = not speech
+  const quietThr = pct(db.subarray(fr(f.a - 3), fr(f.b + 3)), 0.1) + 6; // close to the room's noise floor
+  const isSpeech = (i, dir) => { // speech that lasts: at least 8 of the 12 frames from i onward (or backward)
+    let k = 0;
+    for (let j = 0; j < 12; j++) { const x = i + dir * j; if (x >= 0 && x < n && db[x] > speechThr) k++; }
+    return db[i] > speechThr && k >= 8;
+  };
+  // end of real speech before the cut, and start of real speech (the restart) after it
+  let i0 = fr(f.a);
+  const lo = fr(f.a - 3);
+  while (i0 > lo && !isSpeech(i0 - 1, -1)) i0--;
+  let i1 = fr(f.b);
+  const nextStart = f.i + 1 < chunks.length ? chunks[f.i + 1].start : dur;
+  // never skip past the restart: its known start (word timings) or, at a line's end, the next line
+  const hiT = f.basis === "words" && f.restartAt != null ? f.restartAt + 0.05 : (f.b >= c.end - 0.15 ? nextStart + 0.05 : Math.min(c.end, f.b + 3));
+  const hi = fr(hiT);
+  while (i1 < hi && !isSpeech(i1, +1)) i1++;
+  const speechEnd = i0 / 100, onset = i1 / 100;
   const atEdge = f.a <= c.start + 0.15 || f.b >= c.end - 0.15;
   const target = atEdge ? usualGap(chunks) : 0.18;
-  if (total <= target + 0.05) return { a: f.a, b: f.b };
-  // keep part of the pause on each side, in proportion, adding up to the target
-  const keepBefore = Math.min(before, target * (before / total)), keepAfter = Math.min(after, target - keepBefore);
-  return { a: Math.min(f.a, s1 + keepBefore), b: Math.max(f.b, e2 - keepAfter) };
+  if (onset - speechEnd <= target + 0.05) return { a: f.a, b: f.b };
+  // Keep the pause from clean stretches: right after the speech before (its natural fade allowed) and a short
+  // lead-in right before the restart. Stop either one early if it would take in a breath or a mutter.
+  const junk = quietThr + 6;
+  let j = i0 + 15; while (j < i1 && db[j] <= junk) j++;            // first non-quiet frame after the fade
+  let k = i1 - 5; while (k > i0 && db[k - 1] <= junk) k--;          // last non-quiet frame before the rise
+  const lead = Math.max(0.03, Math.min(0.12, (i1 - k) / 100));
+  const tail = Math.max(0.05, Math.min(target - lead, (j - i0) / 100));
+  return { a: Math.min(f.a, Math.max(speechEnd + tail, f.a - 3)), b: Math.max(f.b, onset - lead) };
 }
 
 // Before/after clips (a couple of seconds either side) so the cut can be checked by ear.
