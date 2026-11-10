@@ -106,7 +106,10 @@ async function openOutro(url) {
  * builds: [{bitmap}] in display order; times: start time (s, lesson clock) of each build;
  * captions: [{start,end,text}] lesson clock; duration: lesson length (s).
  */
-export async function encodeVideo({ builds, times, captions, duration, outroUrl = "/assets/OT_Outro_White.mp4", onProgress, signal }) {
+// The outro clip may be uploaded with underscores or with spaces in its name.
+export const OUTRO_CANDIDATES = ["/assets/OT_Outro_White.mp4", "/assets/OT%20Outro%20White.mp4", "/assets/OT-Outro-White.mp4"];
+
+export async function encodeVideo({ builds, times, captions, duration, outroUrl, onProgress, signal }) {
   const cfg = await pickCodec();
   const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: "avc", width: W, height: H, frameRate: FPS }, fastStart: "in-memory" });
   let encErr = null;
@@ -115,7 +118,11 @@ export async function encodeVideo({ builds, times, captions, duration, outroUrl 
 
   const cv = new OffscreenCanvas(W, H);
   const ctx = cv.getContext("2d", { alpha: false });
-  const outro = await openOutro(outroUrl).catch(() => null);
+  let outro = null;
+  for (const u of outroUrl ? [outroUrl] : OUTRO_CANDIDATES) {
+    outro = await openOutro(u).catch(() => null);
+    if (outro) { outroUrl = u; break; }
+  }
   const outroFrames = outro ? Math.round(outro.duration * FPS) : 0;
   const lessonFrames = Math.round(duration * FPS);
   const total = lessonFrames + outroFrames;
@@ -170,7 +177,7 @@ export async function encodeVideo({ builds, times, captions, duration, outroUrl 
   enc.close();
   muxer.finalize();
   onProgress?.(1);
-  return { video: new Uint8Array(muxer.target.buffer), hasOutro: !!outro, outroDuration: outroFrames / FPS };
+  return { video: new Uint8Array(muxer.target.buffer), hasOutro: !!outro, outroUrl: outro ? outroUrl : null, outroDuration: outroFrames / FPS };
 }
 
 let ffmpegP = null;
@@ -198,7 +205,7 @@ async function getFFmpeg(onLog) {
  * Adds cleaned narration (+ the outro's own audio) to the silent video.
  * audioStart/duration are on the original recording's clock.
  */
-export async function muxAudio({ video, audioFile, audioStart, duration, hasOutro, outroUrl = "/assets/OT_Outro_White.mp4", onProgress }) {
+export async function muxAudio({ video, audioFile, audioStart, duration, hasOutro, outroUrl, onProgress }) {
   const ff = await getFFmpeg();
   const progress = ({ progress }) => onProgress?.(Math.max(0, Math.min(1, progress)));
   ff.on("progress", progress);

@@ -4,6 +4,7 @@
   "private": true,
   "description": "Ontario Tech SLS explainer video studio (Netlify + in-browser rendering)",
   "scripts": {
+    "build": "node scripts/vendor.mjs",
     "dev": "MOCK_CLAUDE=1 node dev/server.mjs 8888",
     "test:api": "node dev/api-test.mjs"
   },

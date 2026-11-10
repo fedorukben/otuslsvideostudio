@@ -29,10 +29,10 @@ try {
   const lessonEnd = Math.min(ab.duration, chunks.at(-1).end + 1.0);
   const duration = lessonEnd - lessonStart;
   const caps = buildCaptions(chunks).map((c) => ({ ...c, start: c.start - lessonStart, end: c.end - lessonStart }));
-  const { video, hasOutro } = await encodeVideo({ builds, times: times.map((t) => Math.max(0, t - lessonStart)), captions: caps, duration,
+  const { video, hasOutro, outroUrl } = await encodeVideo({ builds, times: times.map((t) => Math.max(0, t - lessonStart)), captions: caps, duration,
     outroUrl: "/dev-fixture/test_outro.mp4", onProgress: (p) => (window.encProgress = p) });
   L("encoded video bytes", video.length, "outro", hasOutro, "ms", Math.round(performance.now() - t0));
-  const blob = await muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl: "/dev-fixture/test_outro.mp4" });
+  const blob = await muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl });
   L("muxed bytes", blob.size, "total ms", Math.round(performance.now() - t0));
   const buf = new Uint8Array(await blob.arrayBuffer());
   let s = ""; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));

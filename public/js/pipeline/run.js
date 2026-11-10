@@ -131,12 +131,12 @@ export async function render(job, ui, asrModel) {
   const builds = await renderAllBuilds(spec, (p) => ui.progress(p, "Drawing slides"));
 
   ui.step("Encoding video (keep this tab open)");
-  const { video, hasOutro } = await encodeVideo({ builds, times: t, captions: caps, duration,
+  const { video, hasOutro, outroUrl } = await encodeVideo({ builds, times: t, captions: caps, duration,
     onProgress: (p) => ui.progress(p, "Encoding video") });
   if (!hasOutro) ui.warn?.("The Ontario Tech outro clip wasn't found at /assets/OT_Outro_White.mp4, so this video has no outro. Ask an admin to add it.");
 
   ui.step("Mixing audio and adding the outro");
-  const mp4 = await muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro,
+  const mp4 = await muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl,
     onProgress: (p) => ui.progress(p, "Mixing audio") });
   const srt = toSrt(capsRaw, lessonStart);
 

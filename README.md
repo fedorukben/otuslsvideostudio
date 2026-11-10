@@ -26,8 +26,8 @@ People sign in with email and a password. Admins manage users, API keys and spen
 
 ## Deploy to Netlify
 
-1. **Add the outro clip.** Copy the official `OT_Outro_White.mp4` to `public/assets/OT_Outro_White.mp4`. Without it, videos render with no outro and a warning. The reverse logo (`public/assets/logo-reverse.svg`) is already included, copied from the Ontario Tech design system.
-2. **Put the folder in a Git repository** (GitHub, for example) and create a Netlify site from it. Leave the build command blank; `netlify.toml` sets the publish folder (`public`) and the functions folder. You can also deploy with the Netlify CLI: `netlify deploy --prod`.
+1. **Add the outro clip.** Put the official outro in `public/assets/` as `OT_Outro_White.mp4` (the name `OT Outro White.mp4` with spaces also works). Without it, videos render with no outro and a warning. The reverse logo (`public/assets/logo-reverse.svg`) is already included, copied from the Ontario Tech design system.
+2. **Put the folder in a Git repository** (GitHub, for example) and create a Netlify site from it. `netlify.toml` sets everything: on each deploy Netlify runs `npm run build`, which copies the browser libraries from npm into `public/vendor/`. That folder is **not** stored in Git, so GitHub's upload limits don't matter. You can also deploy with the Netlify CLI: `netlify deploy --prod`.
 3. **Set environment variables** (Site configuration → Environment variables):
    - `JWT_SECRET`: a random string of 32+ characters (signs sign-in sessions).
    - `ENCRYPTION_SECRET`: a different random string of 32+ characters (encrypts API keys). **Don't change it later**, or stored keys can't be decrypted and must be re-added.
@@ -69,7 +69,7 @@ npm run test:api       # in another terminal: auth, roles, keys, caps, metering,
 python3 dev/e2e_test.py   # full UI run in Chrome with Playwright (mock ASR + mock Claude)
 ```
 
-The dev server's setup code is `letmein`. The libraries in `public/vendor/` are copied from `node_modules` (see `devDependencies`), so the site has no build step.
+The dev server's setup code is `letmein`. Run `npm run build` once after `npm install` to fill `public/vendor/` locally.
 
 ## Files
 
