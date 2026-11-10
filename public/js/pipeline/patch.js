@@ -309,14 +309,47 @@ function cutPcm(pcm, a, b) {
   return out;
 }
 
+// After a cut, the pause before the false start and the pause after it would run together.
+// Widen the cut into that silence so the join is a normal pause: the narrator's usual gap between
+// sentences when the cut takes out whole sentences or reaches a line's edge, a short breath inside a sentence.
+function usualGap(chunks) {
+  const gaps = chunks.slice(1).map((c, k) => c.start - chunks[k].end).filter((g) => g > 0.05 && g < 3).sort((x, y) => x - y);
+  const med = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0.5;
+  return Math.min(0.8, Math.max(0.3, med));
+}
+function quietRun(pcm, t, dir, limit) {
+  // how far silence extends from t (dir -1 = backwards, +1 = forwards), stopping at speech or `limit`
+  const db = frames(pcm);
+  const peak = db.reduce((m, x) => Math.max(m, x), -200);
+  const thr = Math.max(-50, peak - 35);
+  let i = Math.round(t * 100);
+  const stop = Math.round(limit * 100);
+  if (dir < 0) { while (i - 1 >= Math.max(0, stop) && db[i - 1] < thr) i--; }
+  else { while (i < Math.min(db.length, stop) && db[i] < thr) i++; }
+  return i / 100;
+}
+export function tightenCut(pcm, chunks, f) {
+  const c = chunks[f.i], dur = pcm.length / SR;
+  const s1 = quietRun(pcm, f.a, -1, Math.max(0, f.a - 3));   // silence before the cut starts here
+  const e2 = quietRun(pcm, f.b, +1, Math.min(dur, f.b + 3));      // and after it ends here
+  const before = f.a - s1, after = e2 - f.b, total = before + after;
+  const atEdge = f.a <= c.start + 0.15 || f.b >= c.end - 0.15;
+  const target = atEdge ? usualGap(chunks) : 0.18;
+  if (total <= target + 0.05) return { a: f.a, b: f.b };
+  // keep part of the pause on each side, in proportion, adding up to the target
+  const keepBefore = Math.min(before, target * (before / total)), keepAfter = Math.min(after, target - keepBefore);
+  return { a: Math.min(f.a, s1 + keepBefore), b: Math.max(f.b, e2 - keepAfter) };
+}
+
 // Before/after clips (a couple of seconds either side) so the cut can be checked by ear.
 export async function cutPreview(job, f, around = 1.5) {
   const { pcm } = await narration(job.id);
-  const s = Math.max(0, f.a - around), e = Math.min(pcm.length / SR, f.b + around);
+  const { a, b } = tightenCut(pcm, job.state.chunks, f);
+  const s = Math.max(0, a - around), e = Math.min(pcm.length / SR, b + around);
   const clip = pcm.slice(Math.floor(s * SR), Math.ceil(e * SR));
   return {
     before: URL.createObjectURL(wavBlob(clip)),
-    after: URL.createObjectURL(wavBlob(cutPcm(clip, f.a - s, f.b - s))),
+    after: URL.createObjectURL(wavBlob(cutPcm(clip, a - s, b - s))),
   };
 }
 
@@ -327,7 +360,12 @@ export async function applyCuts(job, list, save) {
   let out = pcm;
   const done = [];
   const esc = (w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/-$/, "-?");
-  for (const f of [...list].sort((x, y) => y.a - x.a)) {
+  let limit = Infinity; // cuts run from the end; one never reaches into the one after it
+  for (const f0 of [...list].sort((x, y) => y.a - x.a)) {
+    if (!(f0.b - f0.a > 0.02)) continue;
+    const t = tightenCut(pcm, job.state.chunks, f0);
+    const f = { ...f0, a: t.a, b: Math.min(t.b, limit) };
+    limit = f.a;
     const c = chunks[f.i], d = f.b - f.a;
     if (!(d > 0.02)) continue;
     out = cutPcm(out, f.a, f.b);
@@ -355,7 +393,9 @@ export async function applyCuts(job, list, save) {
     done.push({ chunk: c.id, cut: f.cut, seconds: +d.toFixed(2) });
   }
   if (!done.length) throw new Error("That cut is too short to make. Adjust its start and end, then try again.");
-  await commit(job, file, out, chunks, { kind: "cut", cuts: done.reverse() }, save);
+  // A line that was nothing but a false start is dropped (before the slides are planned; after that, slides point at it).
+  const kept = job.state.spec ? chunks : chunks.filter((c) => String(c.caption ?? c.text ?? "").trim());
+  await commit(job, file, out, kept, { kind: "cut", cuts: done.reverse() }, save);
   return done;
 }
 
