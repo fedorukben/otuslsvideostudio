@@ -401,6 +401,7 @@ export async function applyCuts(job, list, save) {
         if (!m) continue;
         c[k] = (c[k].slice(0, m.index) + m[1] + c[k].slice(m.index + m[0].length)).replace(/\s{2,}/g, " ").trim();
         if (m.index === 0) c[k] = c[k].replace(/^([a-z])/, (x) => x.toUpperCase());
+        if (k !== "latex" && !toks(c[k]).length) c[k] = ""; // nothing but punctuation left: the line is empty
       }
     }
     // Word timings: drop the words inside the cut, move the rest back.

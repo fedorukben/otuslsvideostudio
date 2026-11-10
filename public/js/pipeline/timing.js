@@ -96,12 +96,12 @@ export function buildCaptions(chunks) {
   const out = [];
   for (const ch of chunks) {
     const text = String(ch.caption ?? ch.text ?? "").replace(/\s+/g, " ").trim();
-    if (!text) continue;
+    if (!/[A-Za-z0-9]/.test(text)) continue; // nothing to read (empty, or punctuation left after a cut)
     const pieces = splitCaption(text, 140);
     // Word timings (AssemblyAI) give exact caption times, as long as the caption text wasn't edited.
-    if (ch.words?.length && norm(text).join(" ") === norm(ch.words.map((w) => w.w).join(" ")).join(" ")) {
-      const tokenWord = []; // which timed word each normalised token came from
-      ch.words.forEach((w, i) => norm(w.w).forEach(() => tokenWord.push(i)));
+    const tokenWord = []; // which timed word each normalised token came from
+    (ch.words || []).forEach((w, i) => { if (Number.isFinite(w?.s) && Number.isFinite(w?.e)) norm(w.w).forEach(() => tokenWord.push(i)); });
+    if (tokenWord.length && norm(text).join(" ") === norm(ch.words.map((w) => w.w).join(" ")).join(" ")) {
       let ti = 0;
       for (const p of pieces) {
         const n = Math.max(1, norm(p).length);
@@ -114,9 +114,10 @@ export function buildCaptions(chunks) {
       for (let i = out.length - pieces.length; i < out.length - 1; i++) out[i].end = Math.max(out[i].end, out[i + 1].start);
       continue;
     }
-    const total = pieces.reduce((a, p) => a + p.length, 0);
-    let t = ch.start;
-    const dur = ch.end - ch.start;
+    // No usable word timings (none, edited text, or a line with no words in it): spread by characters.
+    const total = pieces.reduce((a, p) => a + p.length, 0) || 1;
+    let t = Number.isFinite(ch.start) ? ch.start : (out.at(-1)?.end ?? 0);
+    const dur = Number.isFinite(ch.end) && ch.end > t ? ch.end - t : Math.max(1, text.length / 15);
     for (const p of pieces) {
       const d = (p.length / total) * dur;
       out.push({ start: t, end: t + d, text: p });
