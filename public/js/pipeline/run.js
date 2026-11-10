@@ -82,7 +82,7 @@ async function mathPass(job, spoken, ui, size = 15) {
       const r = await claude(job.id, "math-pass", {
         system: P.MATH_PASS, max_tokens: 16000,
         messages: [{ role: "user", content: P.mathPassMessage(batch, job.state.script) }],
-      }, { onStatus: status(ui, batches.length > 1 ? `Math pass (part ${Math.min(done + 1, batches.length)} of ${batches.length})` : "Math pass") });
+      }, { onStatus: status(ui, "Math pass") });
       if (r.stopReason !== "max_tokens") parsed = P.parseJSON(r.text);
     } catch (e) {
       if (!/JSON|Unexpected|end of data|expected/i.test(e.message)) throw e; // real failures (caps, network) stop here
