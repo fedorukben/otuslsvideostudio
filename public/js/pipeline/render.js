@@ -1,3 +1,5 @@
+import { layoutDiagram, drawDiagram, ease } from "./diagram.js";
+import { AdvancedHost, AREA } from "./advanced.js";
 // Draws slides in the Ontario Tech style onto a 1920×1080 canvas from the slide spec.
 // Math is typeset by MathJax (SVG) and drawn as images.
 
@@ -323,6 +325,13 @@ async function layoutElement(ctx, el, maxW) {
         });
       } };
     }
+    case "diagram": {
+      const d = await layoutDiagram(ctx, el, maxW, { mathImage, C, font });
+      return { w: d.w, h: d.h, errors: d.errors, diagram: d, draw(x, y, colW, tw) {
+        const ox = d.align === "left" ? x : x + (colW - d.w) / 2;
+        drawDiagram(ctx, d, ox, y, { prev: tw?.prevDiagram || null, p: tw?.p ?? 1, fresh: !!tw?.fresh, C, font });
+      } };
+    }
     default:
       return { w: 0, h: 0, errors: [`Unknown element type "${el.type}"`], draw() {} };
   }
@@ -414,6 +423,7 @@ export async function layoutBuild(ctx, spec, sceneIdx, buildIdx) {
   await loadFonts();
   const scene = spec.scenes[sceneIdx];
   if (scene.kind === "title") return { errors: [], draw: () => titleCard(ctx, spec) };
+  if (scene.kind === "advanced") return { errors: [], advanced: true, draw: () => contentChrome(ctx, spec, scene) };
   const els = resolveBuilds(scene)[buildIdx] || [];
   if (scene.kind === "summary") {
     const steps = els.filter((e) => e.type === "step").map((e) => e.text);
@@ -421,20 +431,48 @@ export async function layoutBuild(ctx, spec, sceneIdx, buildIdx) {
     return { errors: body.errors, draw() { contentChrome(ctx, spec, scene); body.draw(); } };
   }
   const lays = [];
-  for (const el of els) lays.push({ el, lay: await layoutElement(ctx, el, CONTENT_W) });
+  let yy = 0;
+  for (const el of els) {
+    const lay = await layoutElement(ctx, el, CONTENT_W);
+    lays.push({ el, lay, y: yy });
+    yy += lay.h + GAP;
+  }
   const total = lays.reduce((a, l) => a + l.lay.h, 0) + GAP * Math.max(0, lays.length - 1);
   const room = CONTENT_BOTTOM - CONTENT_TOP;
   const errors = lays.flatMap((l) => l.lay.errors);
   if (total > room) errors.push(`Content is ${Math.round(total - room)}px too tall for the slide; split it into another scene or shorten it`);
-  return {
-    errors, height: total,
+  const self = {
+    errors, height: total, items: lays, els,
+    hasDiagram: lays.some((l) => l.lay.diagram),
     // yOffset centres the scene's tallest build; every build in a scene uses the same offset so nothing jumps.
-    draw(yOffset = 0) {
+    // With `from` (the previous build's layout) and p < 1, draws the animated transition between them.
+    draw(yOffset = 0, from = null, p = 1) {
       contentChrome(ctx, spec, scene);
-      let y = CONTENT_TOP + 8 + yOffset;
-      for (const { lay } of lays) { lay.draw(MARGIN_X, y, CONTENT_W); y += lay.h + GAP; }
+      const top = CONTENT_TOP + 8 + yOffset;
+      if (!from || p >= 1) { for (const { lay, y } of lays) lay.draw(MARGIN_X, top + y, CONTENT_W); return; }
+      const q = ease(p);
+      const matched = new Set();
+      for (const it of lays) {
+        // same element object as before: unchanged
+        let prev = from.items.find((f) => f.el === it.el);
+        if (!prev && it.el.id) prev = from.items.find((f) => f.el.id === it.el.id);
+        if (prev) matched.add(prev);
+        if (prev && prev.el === it.el) { it.lay.draw(MARGIN_X, top + it.y, CONTENT_W); continue; }
+        if (it.lay.diagram) {
+          ctx.save();
+          it.lay.draw(MARGIN_X, top + it.y, CONTENT_W, { p, prevDiagram: prev?.lay.diagram || null, fresh: !prev?.lay.diagram });
+          ctx.restore();
+        } else {
+          if (prev) { ctx.save(); ctx.globalAlpha = 1 - q; prev.lay.draw(MARGIN_X, top + prev.y, CONTENT_W); ctx.restore(); }
+          ctx.save(); ctx.globalAlpha = q; it.lay.draw(MARGIN_X, top + it.y, CONTENT_W); ctx.restore();
+        }
+      }
+      for (const f of from.items) if (!matched.has(f)) { // removed: fade out where it was
+        ctx.save(); ctx.globalAlpha = 1 - q; f.lay.draw(MARGIN_X, top + f.y, CONTENT_W); ctx.restore();
+      }
     },
   };
+  return self;
 }
 
 // ---------------- captions ----------------
@@ -468,15 +506,63 @@ export function sceneOffset(lays) {
   return maxH ? Math.max(0, (room - maxH) * 0.42) : 0;
 }
 
-// Render every build to an ImageBitmap (captions not included).
-export async function renderAllBuilds(spec, onProgress) {
+// How each build arrives: "morph" (shapes animate) when its scene has a diagram that changed, else a quick fade.
+export function transitionFor(spec, sceneIdx, buildIdx, lay, prevLay) {
+  const b = spec.scenes[sceneIdx]?.builds?.[buildIdx] || {};
+  const t = b.transition || {};
+  if (t.type === "cut") return { kind: "cut", dur: 0 };
+  if (buildIdx > 0 && prevLay && (t.type === "morph" || (t.type !== "fade" && lay?.hasDiagram))) {
+    return { kind: "morph", dur: Math.min(3, Math.max(0.3, Number(t.duration) || 0.9)) };
+  }
+  return { kind: "fade", dur: Math.min(1.5, Math.max(0.15, Number(t.duration) || 0.35)) };
+}
+
+/**
+ * Prepares every build of a video. Returns an array of {scene, build, bitmap, errors, transition} (the bitmap is
+ * the build's settled look, captions not included) with helpers attached:
+ *   drawMorph(i, p)  → canvas showing build i part-way (0..1) through its animated arrival
+ *   drawAdvanced(sceneIdx, t) → canvas with an advanced scene at t seconds after it started
+ *   sceneTimes(sceneIdx) → scene-relative build start times used for advanced scenes
+ *   dispose()        → stop advanced-scene sandboxes
+ * `times` (optional): absolute start time of every build, in order; used to time advanced scenes.
+ */
+export async function renderAllBuilds(spec, onProgress, { times = null } = {}) {
   const cv = new OffscreenCanvas(W, H);
   const ctx = cv.getContext("2d");
   const out = [];
   const total = spec.scenes.reduce((a, s) => a + Math.max(1, (s.builds || []).length), 0);
-  let n = 0;
+  const layAt = [], offAt = [], hosts = new Map(), sceneBuildTimes = new Map();
+  const colors = { blue: C.simcoe, tangerine: C.tangerine, navy: C.futureBlue, ink: C.ink, grey: C.grey, light: C.light, white: C.white };
+  let n = 0, gi = 0;
   for (let si = 0; si < spec.scenes.length; si++) {
-    const nb = Math.max(1, (spec.scenes[si].builds || []).length);
+    const scene = spec.scenes[si];
+    const nb = Math.max(1, (scene.builds || []).length);
+    // scene-relative build times (real ones when known, else 4 s apart)
+    const rel = [];
+    for (let bi = 0; bi < nb; bi++) rel.push(times ? Math.max(0, times[gi + bi] - times[gi]) : bi * 4);
+    sceneBuildTimes.set(si, rel);
+    if (scene.kind === "advanced") {
+      const host = new AdvancedHost();
+      const texErr = await host.start({ code: scene.code, tex: scene.tex, colors, mathImage });
+      hosts.set(si, host);
+      for (let bi = 0; bi < nb; bi++) {
+        const errors = texErr.map((e) => `Advanced scene: ${e}`);
+        let bitmap;
+        try {
+          const settle = bi + 1 < nb ? Math.min(rel[bi + 1] - 0.05, rel[bi] + 2.5) : rel[bi] + 2.5;
+          const c = await drawAdvancedInto(ctx, spec, scene, host, settle, rel);
+          bitmap = await createImageBitmap(c);
+        } catch (e) {
+          errors.push(`Advanced scene code failed: ${e.message}`);
+          ctx.clearRect(0, 0, W, H); contentChrome(ctx, spec, scene); bitmap = await createImageBitmap(cv);
+        }
+        out.push({ scene: si, build: bi, bitmap, errors, transition: { kind: bi === 0 ? "fade" : "none", dur: bi === 0 ? 0.35 : 0 }, advanced: true });
+        layAt.push(null); offAt.push(0);
+        onProgress?.(++n / total);
+      }
+      gi += nb;
+      continue;
+    }
     const lays = [];
     for (let bi = 0; bi < nb; bi++) lays.push(await layoutBuild(ctx, spec, si, bi));
     const off = sceneOffset(lays);
@@ -484,9 +570,29 @@ export async function renderAllBuilds(spec, onProgress) {
       const lay = lays[bi];
       ctx.clearRect(0, 0, W, H);
       lay.draw(off);
-      out.push({ scene: si, build: bi, bitmap: await createImageBitmap(cv), errors: lay.errors });
+      out.push({ scene: si, build: bi, bitmap: await createImageBitmap(cv), errors: lay.errors,
+        transition: transitionFor(spec, si, bi, lay, bi > 0 ? lays[bi - 1] : null) });
+      layAt.push(lay); offAt.push(off);
       onProgress?.(++n / total);
     }
+    gi += nb;
   }
+  async function drawAdvancedInto(c2, spec2, scene, host, t, rel) {
+    const frame = await host.drawAt(t, rel);
+    c2.clearRect(0, 0, W, H);
+    contentChrome(c2, spec2, scene);
+    c2.drawImage(frame, AREA.x, AREA.y);
+    frame.close?.();
+    return cv;
+  }
+  out.drawMorph = (i, p) => {
+    const lay = layAt[i], prev = i > 0 && out[i - 1].scene === out[i].scene ? layAt[i - 1] : null;
+    ctx.clearRect(0, 0, W, H);
+    lay.draw(offAt[i], prev, p);
+    return cv;
+  };
+  out.drawAdvanced = async (si, t) => drawAdvancedInto(ctx, spec, spec.scenes[si], hosts.get(si), t, sceneBuildTimes.get(si));
+  out.sceneTimes = (si) => sceneBuildTimes.get(si);
+  out.dispose = () => { for (const h of hosts.values()) h.stop(); hosts.clear(); };
   return out;
 }

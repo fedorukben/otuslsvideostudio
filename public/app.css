@@ -144,3 +144,8 @@ label.switch input { margin-top: 4px; }
 nav .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; background: var(--tan); color: #fff; font: 500 12px/18px "Ubuntu"; text-align: center; }
 label.switch > span { flex: 1; font-weight: 400; }
 label.switch > span > input[type=number] { padding: 4px 8px; }
+
+/* scene preview */
+.player { margin: 10px 0 14px; }
+.player canvas { width: 100%; max-width: 960px; display: block; border: 1px solid var(--line); background: #fff; }
+button.small-btn { padding: 6px 12px; font-size: 14px; }

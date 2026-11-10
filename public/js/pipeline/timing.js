@@ -154,3 +154,23 @@ export function toSrt(captions, offset = 0) {
   return captions.map((c, i) =>
     `${i + 1}\n${srtTime(c.start - offset)} --> ${srtTime(c.end - offset)}\n${wrapCaption(c.text).slice(0, 2).join("\n")}\n`).join("\n");
 }
+
+// Build start times from the transcript alone (no audio): for previews before the real timing is done.
+export function approxTimes(spec, chunks) {
+  const byId = new Map(chunks.map((c) => [c.id, c]));
+  const out = [];
+  for (const sc of spec.scenes) for (const b of sc.builds?.length ? sc.builds : [{}]) {
+    const ch = byId.get(b.start?.chunk);
+    let t = out.length ? out.at(-1) + 2.5 : 0;
+    if (ch) {
+      const text = ch.caption ?? ch.text ?? "";
+      if (ch.words?.length) { const k = wordIndexOf(ch.words, b.start.phrase || ""); if (k >= 0) t = ch.words[k].s; else t = ch.start; }
+      else if (b.start.phrase && startsWithScore(text, b.start.phrase) < 0.67) {
+        const pos = phrasePosition(text, b.start.phrase);
+        t = pos == null ? ch.start : ch.start + pos * (ch.end - ch.start);
+      } else t = ch.start;
+    }
+    out.push(out.length ? Math.max(t, out.at(-1) + 0.8) : 0);
+  }
+  return out;
+}

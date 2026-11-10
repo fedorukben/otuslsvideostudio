@@ -1,0 +1,25 @@
+<!doctype html>
+<meta charset="utf-8">
+<body>
+<script type="module">
+import { renderAllBuilds, loadLogo, W, H } from "/js/pipeline/render.js";
+const spec = await (await fetch("/dev-fixture/product.json")).json();
+spec.stream = "math";
+await loadLogo();
+window.out = [];
+try {
+  const times = [0, 4, 8, 12, 17, 21];
+  const builds = await renderAllBuilds(spec, null, { times });
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  const snap = (label) => window.out.push({ label, png: cv.toDataURL("image/png") });
+  for (let i = 0; i < builds.length; i++) window.out.push({ label: `errors ${i}`, errors: builds[i].errors, transition: builds[i].transition });
+  // morph frames for builds 1..3 of scene 1
+  for (const i of [1, 2, 3]) for (const p of [0.15, 0.5, 0.85, 1]) {
+    ctx.clearRect(0, 0, W, H); ctx.drawImage(builds.drawMorph(i, p), 0, 0); snap(`build ${i} p=${p}`);
+  }
+  for (const t of [0.5, 4.5, 5.5, 7.5]) { ctx.clearRect(0, 0, W, H); ctx.drawImage(await builds.drawAdvanced(1, t), 0, 0); snap(`advanced t=${t}`); }
+  builds.dispose();
+} catch (e) { window.out.push({ label: "ERROR", error: String(e.stack || e) }); }
+window.done = true;
+</script>

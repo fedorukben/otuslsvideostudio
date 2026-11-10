@@ -1,0 +1,50 @@
+{
+  "title": "The Product Rule", "subtitle": "Why the derivative of fg isn't f'g'", "eyebrow": "Product Rule",
+  "scenes": [
+    { "kind": "content", "heading": "Two Strips and a Corner",
+      "builds": [
+        { "start": { "chunk": 0, "phrase": "Picture f times g" },
+          "add": [ { "id": "area", "type": "diagram", "height": 600, "width": 1300, "shapes": [
+            { "id": "fg", "type": "rect", "x": 250, "y": 170, "w": 640, "h": 320, "fill": "blue", "label": { "tex": "f\\,g", "size": 56, "color": "ink" } },
+            { "id": "wf", "type": "dim", "x1": 250, "y1": 490, "x2": 890, "y2": 490, "offset": -34, "color": "blue", "label": { "tex": "f", "color": "blue" } },
+            { "id": "hg", "type": "dim", "x1": 250, "y1": 170, "x2": 250, "y2": 490, "offset": 34, "color": "tangerine", "label": { "tex": "g", "color": "tangerine" } }
+          ] } ] },
+        { "start": { "chunk": 0, "phrase": "nudge both" },
+          "set": [ { "id": "area", "type": "diagram", "height": 600, "width": 1300, "shapes": [
+            { "id": "fg", "type": "rect", "x": 250, "y": 170, "w": 640, "h": 320, "fill": "blue", "label": { "tex": "f\\,g", "size": 56, "color": "ink" } },
+            { "id": "wf", "type": "dim", "x1": 250, "y1": 490, "x2": 890, "y2": 490, "offset": -34, "color": "blue", "label": { "tex": "f", "color": "blue" } },
+            { "id": "hg", "type": "dim", "x1": 250, "y1": 170, "x2": 250, "y2": 490, "offset": 34, "color": "tangerine", "label": { "tex": "g", "color": "tangerine" } },
+            { "id": "side", "type": "rect", "x": 890, "y": 170, "w": 180, "h": 320, "fill": "blue", "fillOpacity": 0.35, "enter": "grow-right", "label": { "tex": "g\\,\\Delta f", "color": "blue" } },
+            { "id": "top", "type": "rect", "x": 250, "y": 60, "w": 640, "h": 110, "fill": "tangerine", "fillOpacity": 0.3, "enter": "grow-up", "label": { "tex": "f\\,\\Delta g", "color": "tangerine" } },
+            { "id": "dfdim", "type": "dim", "x1": 890, "y1": 490, "x2": 1070, "y2": 490, "offset": -34, "color": "blue", "label": { "tex": "\\Delta f", "color": "blue" } },
+            { "id": "dgdim", "type": "dim", "x1": 250, "y1": 60, "x2": 250, "y2": 170, "offset": 34, "color": "tangerine", "label": { "tex": "\\Delta g", "color": "tangerine" } }
+          ] } ] },
+        { "start": { "chunk": 0, "phrase": "tiny corner" },
+          "set": [ { "id": "area", "type": "diagram", "height": 600, "width": 1300, "shapes": [
+            { "id": "fg", "type": "rect", "x": 250, "y": 170, "w": 640, "h": 320, "fill": "blue", "label": { "tex": "f\\,g", "size": 56, "color": "ink" } },
+            { "id": "wf", "type": "dim", "x1": 250, "y1": 490, "x2": 890, "y2": 490, "offset": -34, "color": "blue", "label": { "tex": "f", "color": "blue" } },
+            { "id": "hg", "type": "dim", "x1": 250, "y1": 170, "x2": 250, "y2": 490, "offset": 34, "color": "tangerine", "label": { "tex": "g", "color": "tangerine" } },
+            { "id": "side", "type": "rect", "x": 890, "y": 170, "w": 180, "h": 320, "fill": "blue", "fillOpacity": 0.35, "label": { "tex": "g\\,\\Delta f", "color": "blue" } },
+            { "id": "top", "type": "rect", "x": 250, "y": 60, "w": 640, "h": 110, "fill": "tangerine", "fillOpacity": 0.3, "label": { "tex": "f\\,\\Delta g", "color": "tangerine" } },
+            { "id": "dfdim", "type": "dim", "x1": 890, "y1": 490, "x2": 1070, "y2": 490, "offset": -34, "color": "blue", "label": { "tex": "\\Delta f", "color": "blue" } },
+            { "id": "dgdim", "type": "dim", "x1": 250, "y1": 60, "x2": 250, "y2": 170, "offset": 34, "color": "tangerine", "label": { "tex": "\\Delta g", "color": "tangerine" } },
+            { "id": "corner", "type": "rect", "x": 890, "y": 60, "w": 180, "h": 110, "fill": "grey", "fillOpacity": 0.3, "stroke": "grey", "enter": "grow", "label": { "tex": "\\Delta f\\,\\Delta g", "color": "grey", "pos": "right" } }
+          ] } ] },
+        { "start": { "chunk": 0, "phrase": "shrinks so fast" },
+          "transition": { "type": "morph", "duration": 1.6 },
+          "set": [ { "id": "area", "type": "diagram", "height": 600, "width": 1300, "shapes": [
+            { "id": "fg", "type": "rect", "x": 250, "y": 170, "w": 640, "h": 320, "fill": "blue", "label": { "tex": "f\\,g", "size": 56, "color": "ink" } },
+            { "id": "wf", "type": "dim", "x1": 250, "y1": 490, "x2": 890, "y2": 490, "offset": -34, "color": "blue", "label": { "tex": "f", "color": "blue" } },
+            { "id": "hg", "type": "dim", "x1": 250, "y1": 170, "x2": 250, "y2": 490, "offset": 34, "color": "tangerine", "label": { "tex": "g", "color": "tangerine" } },
+            { "id": "side", "type": "rect", "x": 890, "y": 170, "w": 50, "h": 320, "fill": "blue", "fillOpacity": 0.35, "label": { "tex": "g\\,\\Delta f", "color": "blue", "pos": "right" } },
+            { "id": "top", "type": "rect", "x": 250, "y": 140, "w": 640, "h": 30, "fill": "tangerine", "fillOpacity": 0.3, "label": { "tex": "f\\,\\Delta g", "color": "tangerine", "pos": "above" } },
+            { "id": "corner", "type": "rect", "x": 890, "y": 140, "w": 50, "h": 30, "fill": "grey", "fillOpacity": 0.3, "stroke": "grey", "label": { "tex": "\\approx 0", "color": "grey", "pos": "right" } }
+          ] } ] }
+      ] },
+    { "kind": "advanced", "heading": "Watch the Corner Vanish",
+      "tex": { "fg": "f\\,g", "side": { "tex": "g\\,\\Delta f", "color": "blue" }, "top": { "tex": "f\\,\\Delta g", "color": "tangerine" }, "corner": { "tex": "\\Delta f\\,\\Delta g", "color": "grey", "size": 40 } },
+      "builds": [ { "start": { "chunk": 1, "phrase": "Now let" } }, { "start": { "chunk": 1, "phrase": "and watch" } } ],
+      "code": "const k = 1 - info.ease.inOut(info.progress(info.builds[1] ?? 3, 3));\nconst x0 = 420, y0 = 210, W = 700, H = 340;\nconst dw = 12 + 190 * k, dh = 8 + 110 * k;\nctx.lineWidth = 3;\nctx.fillStyle = info.colors.blue; ctx.globalAlpha = 0.14; ctx.fillRect(x0, y0, W, H);\nctx.globalAlpha = 0.35; ctx.fillRect(x0 + W, y0, dw, H);\nctx.fillStyle = info.colors.tangerine; ctx.globalAlpha = 0.3; ctx.fillRect(x0, y0 - dh, W, dh);\nctx.fillStyle = info.colors.grey; ctx.globalAlpha = 0.35; ctx.fillRect(x0 + W, y0 - dh, dw, dh);\nctx.globalAlpha = 1; ctx.strokeStyle = info.colors.navy;\nctx.strokeRect(x0, y0, W, H); ctx.strokeRect(x0 + W, y0, dw, H); ctx.strokeRect(x0, y0 - dh, W, dh); ctx.strokeRect(x0 + W, y0 - dh, dw, dh);\ninfo.math('fg', x0 + W / 2, y0 + H / 2);\ninfo.math('side', x0 + W + dw + 20, y0 + H / 2, { align: 'left' });\ninfo.math('top', x0 + W / 2, y0 - dh - 30);\ninfo.math('corner', x0 + W + dw + 20, y0 - dh / 2 - 30, { align: 'left', alpha: 0.3 + 0.7 * k });\ninfo.text('area of the corner: ' + (dw * dh / 1000).toFixed(1), x0 + W / 2, y0 + H + 60, { size: 30, color: info.colors.grey });"
+    }
+  ]
+}

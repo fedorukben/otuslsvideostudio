@@ -134,6 +134,7 @@ export const DEFAULT_SETTINGS = {
   assemblyaiModels: ["universal-3-5-pro", "universal-2"], // priority list sent as speech_models
   showCost: true, // show $ on video pages, including a live total while a video is being made
   // Admin approval before a video can spend anything: "none", "threshold" (estimate over approvalThresholdUsd) or "always".
+  allowAdvanced: true, // advanced scenes (Claude-written animation code) may be used
   approvalMode: "none",
   approvalThresholdUsd: 1,
   stageModels: {

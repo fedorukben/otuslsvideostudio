@@ -6,6 +6,7 @@ import { loadASR, transcribeRemote, chunksFromWords, buildKeyterms } from "./asr
 import * as P from "./prompts.js";
 import { checkSpec } from "./spec.js";
 import { renderAllBuilds, loadLogo, loadFonts, loadMathJax } from "./render.js";
+import { approxTimes } from "./timing.js";
 import { buildTimes, buildCaptions, toSrt } from "./timing.js";
 import { encodeVideo, muxAudio, stillAt } from "./encode.js";
 
@@ -76,7 +77,7 @@ export async function plan(job, ui) {
   await Promise.all([loadFonts(), loadMathJax(), loadLogo()]);
   ui.step("Planning the slides (Opus) — this usually takes 1–3 minutes");
   const r = await claude(job.id, "plan", {
-    system: P.PLAN, max_tokens: 16000,
+    system: P.PLAN, max_tokens: job.state.advancedMode === "off" ? 16000 : 24000,
     messages: [{ role: "user", content: P.planMessage(job, job.state.chunks) }],
   }, { onStatus: status(ui, "Slide planning") });
   let spec = P.parseJSON(r.text);
@@ -89,12 +90,12 @@ export async function fixLoop(job, spec, ui, rounds = 3) {
   spec.stream = job.stream;
   for (let round = 0; round <= rounds; round++) {
     ui.step(round ? `Checking the fixed slides (round ${round})` : "Checking every slide (LaTeX, layout, timing)");
-    const errors = await checkSpec(spec, job.state.chunks);
+    const errors = await checkSpec(spec, job.state.chunks, { allowAdvanced: job.state.advancedMode !== "off" && job.allowAdvanced !== false });
     if (!errors.length) return spec;
     if (round === rounds) { ui.warn?.(`Some problems remain after ${rounds} fix rounds:\n• ${errors.join("\n• ")}`); return spec; }
     ui.step(`Fixing ${errors.length} problem${errors.length > 1 ? "s" : ""} (Sonnet)`);
     const r = await claude(job.id, "fix", {
-      system: P.FIX, max_tokens: 16000,
+      system: P.FIX, max_tokens: 24000,
       messages: [{ role: "user", content: `Problems:\n- ${errors.join("\n- ")}\n\nTranscript chunks:\n${chunkList(job)}\n\nSpec:\n${JSON.stringify(spec)}` }],
     }, { onStatus: status(ui, "Fixing slides") });
     spec = { ...P.parseJSON(r.text), stream: job.stream };
@@ -109,8 +110,8 @@ export async function revise(job, comments, ui) {
   const text = Object.entries(comments.scenes || {}).filter(([, v]) => v.trim()).map(([k, v]) => `Scene ${Number(k) + 1}: ${v}`).join("\n")
     + (comments.general?.trim() ? `\nGeneral: ${comments.general}` : "");
   const r = await claude(job.id, "revise", {
-    system: P.REVISE, max_tokens: 16000,
-    messages: [{ role: "user", content: `Comments:\n${text}\n\nTranscript chunks:\n${chunkList(job)}\n\nCurrent spec:\n${JSON.stringify(job.state.spec)}` }],
+    system: P.REVISE, max_tokens: 24000,
+    messages: [{ role: "user", content: `ADVANCED SCENES: ${P.advancedRule(job)}\n\nComments:\n${text}\n\nTranscript chunks:\n${chunkList(job)}\n\nCurrent spec:\n${JSON.stringify(job.state.spec)}` }],
   }, { onStatus: status(ui, "Revising") });
   let spec = P.parseJSON(r.text);
   spec = await fixLoop(job, spec, ui);
@@ -150,7 +151,7 @@ export async function render(job, ui, asrModel) {
 
   ui.step("Drawing slides");
   await Promise.all([loadFonts(), loadMathJax(), loadLogo()]);
-  const builds = await renderAllBuilds(spec, (p) => ui.progress(p, "Drawing slides"));
+  const builds = await renderAllBuilds(spec, (p) => ui.progress(p, "Drawing slides"), { times: t });
 
   ui.step("Encoding video (keep this tab open)");
   const { video, hasOutro, outroUrl } = await stepRun("Encoding video", () => encodeVideo({ builds, times: t, captions: caps, duration,
@@ -183,6 +184,7 @@ export async function render(job, ui, asrModel) {
     }
   } catch (e) { ui.warn?.("The final frame check didn't run: " + e.message); }
 
+  builds.dispose?.();
   const name = `${job.title.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "")}_OntarioTech`;
   const srtBlob = new Blob([srt], { type: "application/x-subrip" });
   outputs.set(job.id, { mp4, srt: srtBlob });
@@ -196,12 +198,53 @@ export async function render(job, ui, asrModel) {
   return { mp4, srt, name, flags };
 }
 
-// Thumbnails of every build for Checkpoint B (data URLs).
+// Thumbnails of every build for Checkpoint B (data URLs), plus the prepared builds for scene previews.
+let previewBuilds = null;
 export async function thumbnails(job, width = 640) {
   await Promise.all([loadFonts(), loadMathJax(), loadLogo()]);
   const spec = { ...job.state.spec, stream: job.stream };
-  const builds = await renderAllBuilds(spec);
+  previewBuilds?.dispose?.();
+  const times = approxTimes(spec, job.state.chunks || []);
+  const builds = await renderAllBuilds(spec, null, { times });
+  previewBuilds = Object.assign(builds, { times });
   const out = [];
   for (const b of builds) out.push({ scene: b.scene, build: b.build, errors: b.errors, src: await stillAt({ bitmap: b.bitmap, width }) });
   return out;
+}
+
+// Plays one scene (with its animations) into a canvas, using estimated timings. Returns a stop function.
+export function playScene(canvas, sceneIdx, onDone) {
+  const builds = previewBuilds;
+  if (!builds) return () => {};
+  const idx = builds.map((b, i) => i).filter((i) => builds[i].scene === sceneIdx);
+  const t0 = builds.times[idx[0]];
+  const end = idx.at(-1) + 1 < builds.length ? builds.times[idx.at(-1) + 1] : builds.times[idx.at(-1)] + 4;
+  const dur = Math.max(2, end - t0);
+  const ctx = canvas.getContext("2d");
+  const start = performance.now();
+  let stop = false, busy = false;
+  const tick = async () => {
+    if (stop) return;
+    const t = t0 + (performance.now() - start) / 1000;
+    if (t > t0 + dur) { onDone?.(); return; }
+    if (!busy) {
+      busy = true;
+      let b = idx[0];
+      while (b + 1 <= idx.at(-1) && builds.times[b + 1] <= t) b++;
+      const off = new OffscreenCanvas(1920, 1080);
+      const octx = off.getContext("2d");
+      try {
+        const { drawLessonFrame } = await import("./encode.js");
+        // within a preview, don't crossfade from the previous scene
+        const view = Object.assign([...builds], { drawMorph: builds.drawMorph, drawAdvanced: builds.drawAdvanced });
+        if (b === idx[0]) view[b] = { ...builds[b], transition: { kind: "cut", dur: 0 } };
+        await drawLessonFrame(octx, view, builds.times, b, t, t - builds.times[b]);
+        ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+      } catch (e) { console.error(e); }
+      busy = false;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+  return () => { stop = true; };
 }

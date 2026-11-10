@@ -170,10 +170,23 @@ function newView() {
     <label>Your script <span class="muted">(optional; gives exact LaTeX for your math)</span><textarea name="script" rows="5" placeholder="Paste your script, with math as $…$"></textarea></label>
     <label>Tipsheet <span class="muted">(optional; a .tex, .md or .txt file)</span><input name="tipsheet" type="file" accept=".tex,.md,.txt,text/*"></label>
     <label>Notes for the slide planner <span class="muted">(optional)</span><textarea name="notes" rows="3" placeholder="e.g. Use the domino picture in the mental-model scene"></textarea></label>
+    <div id="advbox">
+      <label>Advanced animated scenes <span class="muted">(Claude writes custom animation code for a scene; costs a little more)</span></label>
+      <select name="advancedMode">
+        <option value="auto">Let the planner decide (only where diagrams can't show it)</option>
+        <option value="requested">I'll describe the scenes I want animated</option>
+        <option value="off">Off: use diagrams and standard slides only</option>
+      </select>
+      <label id="advnoteslbl">Which scenes, and what should move? <span class="muted">(optional for "Let the planner decide")</span>
+        <textarea name="advancedNotes" rows="3" placeholder="e.g. Animate the strips shrinking as Δx goes to 0, with the corner vanishing fastest"></textarea></label>
+    </div>
     <div id="m"></div>
     <div class="actions"><button>Upload and start</button><span class="muted small">Next: we transcribe it, then you check the transcript.</span></div>
   </form>`;
-  api("GET", "/api/jobs").then(({ asrProvider: ap }) => {
+  const advSel = document.querySelector('select[name="advancedMode"]');
+  advSel.onchange = () => { document.getElementById("advnoteslbl").style.display = advSel.value === "off" ? "none" : ""; };
+  api("GET", "/api/jobs").then(({ asrProvider: ap, allowAdvanced }) => {
+    if (allowAdvanced === false) document.getElementById("advbox").remove();
     asrProvider = ap || asrProvider;
     document.getElementById("privacy").textContent += asrProvider === "assemblyai"
       ? " Your audio is sent to AssemblyAI for transcription and deleted there afterwards; only text goes to Claude."
@@ -194,6 +207,7 @@ function newView() {
       const { job } = await api("POST", "/api/jobs", { durationSec,
         title: fd.get("title"), eyebrow: fd.get("eyebrow"), subtitle: fd.get("subtitle"), stream: fd.get("stream"),
         script: fd.get("script"), notes: fd.get("notes"), tipsheet, audioName: audio.name,
+        advancedMode: fd.get("advancedMode") || "off", advancedNotes: fd.get("advancedNotes") || "",
       });
       await putFile(`audio:${job.id}`, audio);
       location.hash = `#/job/${job.id}`;
@@ -473,8 +487,11 @@ async function slideReview(job, st) {
   const comments = job.state.lastComments && false ? job.state.lastComments : { scenes: {}, general: "" };
   st.innerHTML = `<h2>Checkpoint B: review the slides</h2>
     <p>Each picture is one build; it appears when you say the words under it. Comment on any scene, then apply the comments, or approve to render.</p>
-    ${spec.scenes.map((sc, si) => `<div class="scene"><div class="eyebrow">Scene ${si + 1} · ${esc(sc.kind)}</div>
-      <h3>${esc(sc.heading || spec.title)}</h3>
+    ${spec.scenes.map((sc, si) => `<div class="scene"><div class="eyebrow">Scene ${si + 1} · ${esc(sc.kind === "advanced" ? "advanced animation" : sc.kind)}</div>
+      <div class="runhead"><h3>${esc(sc.heading || spec.title)}</h3>
+        ${sc.kind === "advanced" || sc.builds?.length > 1 ? `<button class="secondary small-btn" data-play="${si}" style="margin-left:auto">▶ Play scene</button>` : ""}</div>
+      <div class="player" id="player-${si}" hidden><canvas width="960" height="540"></canvas>
+        <div class="small muted">Preview with estimated timing; the final video follows your narration exactly.</div></div>
       <div class="thumbs">${thumbs.filter((t) => t.scene === si).map((t) => {
         const b = sc.builds[t.build] || {};
         const ch = chunkById.get(b.start?.chunk);
@@ -489,6 +506,16 @@ async function slideReview(job, st) {
     <div class="actions"><button id="render">Approve and render</button><button class="secondary" id="apply">Apply comments</button>
       <button class="link" id="adv">Edit the slide spec directly</button></div>
     <div id="advbox"></div></div>`;
+  let stopPlay = null;
+  st.querySelectorAll("[data-play]").forEach((btn) => (btn.onclick = async () => {
+    const si = Number(btn.dataset.play);
+    stopPlay?.();
+    st.querySelectorAll(".player").forEach((p) => (p.hidden = true));
+    const box = document.getElementById(`player-${si}`);
+    box.hidden = false;
+    btn.disabled = true; btn.textContent = "Playing…";
+    stopPlay = (await pipeline()).playScene(box.querySelector("canvas"), si, () => { btn.disabled = false; btn.textContent = "▶ Play again"; });
+  }));
   document.getElementById("apply").onclick = () => {
     st.querySelectorAll("[data-scene]").forEach((t) => (comments.scenes[t.dataset.scene] = t.value));
     comments.general = document.getElementById("general").value;
@@ -740,6 +767,8 @@ async function settingsView() {
       <label>Default monthly $ limit per person <span class="muted">(blank = none)</span><input name="defaultUserMonthlyLimitUsd" type="number" min="0" step="0.5" value="${s.defaultUserMonthlyLimitUsd ?? ""}"></label>
       <label>Default monthly videos per person <span class="muted">(blank = none)</span><input name="defaultUserMonthlyVideoLimit" type="number" min="0" step="1" value="${s.defaultUserMonthlyVideoLimit ?? ""}"></label>
     </div>
+    <label class="switch"><input type="checkbox" name="allowAdvanced" ${s.allowAdvanced !== false ? "checked" : ""}>
+      <span>Allow advanced animated scenes <span class="muted">(Claude writes animation code for scenes a diagram can't show; it runs sandboxed in the browser and costs a little more per video)</span></span></label>
     <label class="switch"><input type="checkbox" name="showCost" ${s.showCost !== false ? "checked" : ""}>
       <span>Show costs while making videos <span class="muted">(a live $ total as each Claude step finishes, plus the cost on each video. Admins always see costs on the Usage page.)</span></span></label><p class="small muted">When a cap is reached, new Claude calls are blocked until next month or until you raise it. A call already running finishes.</p></div>
     <div class="card"><h3>Approval</h3>
@@ -791,7 +820,7 @@ async function settingsView() {
       const body = { monthlyCapUsd: f.monthlyCapUsd, defaultUserMonthlyLimitUsd: f.defaultUserMonthlyLimitUsd,
         defaultUserMonthlyVideoLimit: f.defaultUserMonthlyVideoLimit, asrModel: f.asrModel, stageModels: {}, prices: JSON.parse(f.prices),
         showCost: f.showCost === "on", asrProvider: f.asrProvider, transcriptionPrices: JSON.parse(f.transcriptionPrices),
-        approvalMode: f.approvalMode, approvalThresholdUsd: f.approvalThresholdUsd };
+        approvalMode: f.approvalMode, approvalThresholdUsd: f.approvalThresholdUsd, allowAdvanced: f.allowAdvanced === "on" };
       for (const [k] of stages) body.stageModels[k] = f[`stage:${k}`];
       await api("PUT", "/api/admin/settings", body);
       m.innerHTML = `<div class="okmsg">Settings saved.</div>`;

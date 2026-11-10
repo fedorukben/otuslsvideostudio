@@ -106,6 +106,36 @@ async function openOutro(url) {
   };
 }
 
+// One lesson frame: animated transitions (morph), advanced scenes, or a quick crossfade between stills.
+export async function drawLessonFrame(ctx, builds, times, b, t, since) {
+  const cur = builds[b];
+  const tr = cur.transition || { kind: "fade", dur: XFADE };
+  if (cur.advanced && builds.drawAdvanced) {
+    let first = b;
+    while (first > 0 && builds[first - 1].scene === cur.scene) first--;
+    const frame = await builds.drawAdvanced(cur.scene, t - times[first]);
+    const into = t - times[first];
+    if (first > 0 && into < XFADE) {
+      ctx.drawImage(builds[first - 1].bitmap, 0, 0);
+      ctx.globalAlpha = Math.max(0, into / XFADE);
+    }
+    ctx.drawImage(frame, 0, 0);
+    ctx.globalAlpha = 1;
+    return;
+  }
+  if (tr.kind === "morph" && since < tr.dur && builds.drawMorph) {
+    ctx.drawImage(builds.drawMorph(b, since / tr.dur), 0, 0);
+    return;
+  }
+  const dur = tr.kind === "cut" ? 0 : tr.dur || XFADE;
+  if (b > 0 && since < dur) {
+    ctx.drawImage(builds[b - 1].bitmap, 0, 0);
+    ctx.globalAlpha = Math.max(0, since / dur);
+  }
+  ctx.drawImage(cur.bitmap, 0, 0);
+  ctx.globalAlpha = 1;
+}
+
 /**
  * builds: [{bitmap}] in display order; times: start time (s, lesson clock) of each build;
  * captions: [{start,end,text}] lesson clock; duration: lesson length (s).
@@ -157,11 +187,7 @@ export async function encodeVideo({ builds, times, captions, duration, outroUrl,
     while (b + 1 < times.length && times[b + 1] <= t) b++;
     ctx.globalAlpha = 1;
     const since = t - times[b];
-    if (b > 0 && since < XFADE) {
-      ctx.drawImage(builds[b - 1].bitmap, 0, 0);
-      ctx.globalAlpha = Math.max(0, since / XFADE);
-    }
-    ctx.drawImage(builds[b].bitmap, 0, 0);
+    await drawLessonFrame(ctx, builds, times, b, t, since);
     ctx.globalAlpha = 1;
     while (capIdx < captions.length && captions[capIdx].end <= t) capIdx++;
     const cap = captions[capIdx];

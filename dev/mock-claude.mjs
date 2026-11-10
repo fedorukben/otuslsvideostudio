@@ -7,6 +7,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 function replyFor(body) {
   const sys = (body.system || []).map((b) => b.text).join("");
   const tag = (sys.match(/\[stage:([a-z-]+)\]/) || [])[1];
+  // PLAN_FIXTURE=product.json makes the plan/fix/revise stages return that spec instead.
+  if (process.env.PLAN_FIXTURE && ["plan", "fix", "revise"].includes(tag)) return fs.readFileSync(path.join(here, "fixtures", process.env.PLAN_FIXTURE), "utf8");
   const fixture = path.join(here, "fixtures", `${tag}.txt`);
   if (tag && fs.existsSync(fixture)) return fs.readFileSync(fixture, "utf8");
   if (tag === "math-pass") {

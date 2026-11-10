@@ -68,7 +68,7 @@ http.createServer(async (req, res) => {
     const f = path.join(root, "dev/fixtures", path.basename(url.pathname));
     return fs.existsSync(f) ? res.writeHead(200).end(fs.readFileSync(f)) : res.writeHead(404).end();
   }
-  if (url.pathname === "/dev/render-test.html" || url.pathname === "/dev/pipeline-test.html") {
+  if (["/dev/render-test.html", "/dev/pipeline-test.html", "/dev/anim-test.html"].includes(url.pathname)) {
     return res.writeHead(200, { "content-type": "text/html" }).end(fs.readFileSync(path.join(root, url.pathname)));
   }
   let p = path.join(root, "public", decodeURIComponent(url.pathname));

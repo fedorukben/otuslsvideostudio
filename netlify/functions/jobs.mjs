@@ -21,6 +21,7 @@ export default async (req) => {
         jobs: mine.map(summary).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         asrModel: s.asrModel,
         asrProvider: s.asrProvider,
+        allowAdvanced: s.allowAdvanced !== false,
         showCost: s.showCost !== false,
       });
     }
@@ -56,7 +57,9 @@ export default async (req) => {
         stream: b.stream === "cp" ? "cp" : "math", status: approval.status === "pending" ? "awaiting-approval" : "new",
         createdAt: nowIso(), updatedAt: nowIso(),
         costUsd: 0, calls: 0, audioName: String(b.audioName || ""), state: { notes: String(b.notes || "").slice(0, 4000),
-          script: String(b.script || "").slice(0, 60000), tipsheet: String(b.tipsheet || "").slice(0, 60000) },
+          script: String(b.script || "").slice(0, 60000), tipsheet: String(b.tipsheet || "").slice(0, 60000),
+          advancedMode: s.allowAdvanced === false ? "off" : ["off", "auto", "requested"].includes(b.advancedMode) ? b.advancedMode : "auto",
+          advancedNotes: String(b.advancedNotes || "").slice(0, 3000) },
       };
       await jobsStore().setJSON(job.id, job);
       return json({ job });
@@ -65,7 +68,7 @@ export default async (req) => {
     if (id) {
       const job = await jobsStore().get(id, { type: "json" });
       if (!job || (job.owner !== user.email && user.role !== "admin")) return bad("Video not found", 404);
-      if (req.method === "GET") { const s = await getSettings(); return json({ job, showCost: s.showCost !== false, asrProvider: s.asrProvider, asrModel: s.asrModel }); }
+      if (req.method === "GET") { const s = await getSettings(); return json({ job: { ...job, allowAdvanced: s.allowAdvanced !== false }, showCost: s.showCost !== false, asrProvider: s.asrProvider, asrModel: s.asrModel }); }
       if (req.method === "PATCH") {
         if (job.owner !== user.email) return bad("Only the owner can change this video", 403);
         const b = await body(req);

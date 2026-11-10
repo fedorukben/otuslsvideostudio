@@ -77,6 +77,19 @@ Costs are worked out from each response's token counts (input, cache writes, cac
 
 Claude writes JSON, and a fixed renderer draws it, so every video follows the same brand rules. Scenes are `title`, `content` or `summary`. Builds add, set or remove elements cumulatively, and each build is tied to a chunk of narration plus the first few words spoken there. Element types: `math` (optionally `boxed`), `text` (with inline `$math$`), `label`, `bullets`, `note`, `row` (side by side), `sequence` (tiles), `trap` (two ✗ rows and one ✓ row), and `step` (summary). Colour macros: `\blue{}`, `\orange{}`, `\navy{}`, `\grey{}`. You can download or hand-edit the spec at Checkpoint B.
 
+### Diagrams and motion
+
+A `diagram` element draws real shapes (`rect`, `line`, `circle`, `poly`, `dim` for dimension arrows, `text`) with LaTeX labels, in its own coordinate box. Shapes keep their ids from build to build, so when a later build `set`s the same diagram with new sizes the shapes **morph** smoothly into place; new shapes fade and grow in, removed ones fade out. Each build can choose a `transition` (`morph`, `fade` or `cut`, with a duration). The checker rejects shapes that fall outside the box or labels that overlap.
+
+### Advanced animated scenes
+
+For things a diagram can't do (continuous motion, a graph being traced, a limit shrinking), Claude can write an `advanced` scene: a short JavaScript `draw(ctx, t, info)` function that paints each frame of a fixed area under the slide heading, while the heading, captions and brand chrome stay standard. The code runs in a locked-down sandbox (separate origin, no network, no page access, a time limit per frame), and gets the brand colours, fonts and pre-rendered LaTeX images.
+
+- On **New video**, choose *Let the planner decide*, *I'll describe them* (with notes such as "animate the corner shrinking to zero"), or *Off*.
+- Admins can turn advanced scenes off for everyone in **Settings**.
+- At Checkpoint B each animated scene has a **▶ Play scene** button for a preview with estimated timing.
+- Advanced scenes make the plan longer, so expect a few cents more per video.
+
 ## Develop and test locally
 
 ```

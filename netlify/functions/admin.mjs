@@ -152,6 +152,7 @@ export default async (req) => {
           s.transcriptionPrices = tp;
         }
         if (typeof b.showCost === "boolean") s.showCost = b.showCost;
+        if (typeof b.allowAdvanced === "boolean") s.allowAdvanced = b.allowAdvanced;
         if (["none", "threshold", "always"].includes(b.approvalMode)) s.approvalMode = b.approvalMode;
         if (b.approvalThresholdUsd !== undefined) {
           const t = num(b.approvalThresholdUsd);
