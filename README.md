@@ -9,7 +9,7 @@ People sign in with email and a password. Admins manage users, API keys and spen
 | Step | Where it runs | Cost |
 | --- | --- | --- |
 | 1. Upload narration (M4A/MP3/WAV), title, stream, optional script, tipsheet and notes | Browser | free |
-| 2. Find pauses, transcribe with Whisper (transformers.js) | Browser | free |
+| 2. Transcribe: **in-browser Whisper** (free, audio stays local) **or AssemblyAI** (metered, word-level timing). Chosen in Settings | Browser, or AssemblyAI via the site | free, or about $0.02 per 5-minute video |
 | 3. Math pass: spoken math to LaTeX, flag ambiguities and slips | Claude Haiku via the site | < $0.01 |
 | 4. **Checkpoint A**: you fix the transcript and the math | Browser | free |
 | 5. Slide planning: writes a slide *spec* (JSON), not code | Claude Opus via the site | ~$0.30–$0.60 |
@@ -20,7 +20,7 @@ People sign in with email and a password. Admins manage users, API keys and spen
 | 10. Audio: highpass, loudnorm to −16 LUFS, fades, AAC, outro audio | Browser (ffmpeg.wasm) | free |
 | 11. Final check of key frames against the narration | Claude Haiku via the site | < $0.01 |
 
-**Privacy.** The audio and the finished MP4 never leave the user's computer; they're kept in the browser's IndexedDB. The server stores only accounts, settings, the transcript text, the slide spec and usage records (in Netlify Blobs). API keys are encrypted (AES-256-GCM) and never sent to a browser.
+**Privacy.** With in-browser Whisper, the audio and the finished MP4 never leave the user's computer. With AssemblyAI, the audio is uploaded through the site to AssemblyAI (a US company) for transcription; the site then deletes the transcript at AssemblyAI and its own temporary copy. Either way, the finished MP4 stays on the user's computer; they're kept in the browser's IndexedDB. The server stores only accounts, settings, the transcript text, the slide spec and usage records (in Netlify Blobs). API keys are encrypted (AES-256-GCM) and never sent to a browser.
 
 **Claude calls.** The browser queues each call at `/api/claude/start`. A Netlify *background function* makes the call (it can run up to 15 minutes), records token usage and cost, and the browser polls for the reply. Spending caps are checked before every call.
 
@@ -37,6 +37,13 @@ People sign in with email and a password. Admins manage users, API keys and spen
 4. **Check that background functions are available** on your Netlify plan. The Opus planning call can take a few minutes, longer than a normal function's limit. If your plan doesn't include them, set `SYNC_CLAUDE=true`; the short stages will work, but planning may time out.
 5. **Open the site.** You'll get *Create the admin account*: enter the setup code, your name, email and a password. This works only once.
 6. **As admin:** add an Anthropic API key under **API keys**, set the monthly cap under **Settings**, and add people under **Users**. New users get a temporary password and choose their own at first sign-in.
+
+## Transcription: Whisper or AssemblyAI
+
+Admins choose under **Settings → Transcription**:
+
+- **In-browser Whisper** (default): free, private, but downloads a ~250 MB model the first time and times slides from pauses in the audio.
+- **AssemblyAI**: metered per hour of audio (Universal-3.5 Pro $0.21/hr plus $0.05/hr for key terms, editable in Settings). It returns a time for every word, so slides and captions line up exactly. Words from the video's title, script, tipsheet and notes are sent as key terms to improve recognition. Add an AssemblyAI key under **API keys** first. Transcription costs show on the Usage page as the `transcribe` stage, count toward the caps, and appear in the live cost.
 
 ## Using it
 

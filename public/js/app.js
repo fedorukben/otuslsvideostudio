@@ -11,6 +11,7 @@ const $nav = document.getElementById("nav");
 let me = null;
 let asrModel = "Xenova/whisper-small.en";
 let showCost = true; // admin setting: show $ on video pages
+let asrProvider = "browser"; // admin setting: "browser" Whisper or "assemblyai"
 const running = new Map(); // jobId -> {stage, step, progress, label, warnings[], error}
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -125,8 +126,9 @@ function passwordView(forced) {
 // ---------------- videos ----------------
 async function videosView() {
   $app.innerHTML = `<div class="eyebrow">Student Learning Support</div><h1>My videos</h1><div id="list">${loading("Loading your videos")}</div>`;
-  const { jobs, asrModel: m, showCost: sc } = await api("GET", "/api/jobs");
+  const { jobs, asrModel: m, showCost: sc, asrProvider: ap } = await api("GET", "/api/jobs");
   asrModel = m || asrModel;
+  asrProvider = ap || asrProvider;
   showCost = sc !== false;
   const el = document.getElementById("list");
   if (!jobs.length) {
@@ -140,7 +142,7 @@ async function videosView() {
 
 function newView() {
   $app.innerHTML = `<div class="eyebrow">New explainer video</div><h1>Start from your narration</h1>
-  <p class="muted">Record yourself explaining the topic (one take, a quiet room, a phone voice memo is fine). The audio stays on this computer; only the transcript text goes to Claude.</p>
+  <p class="muted" id="privacy">Record yourself explaining the topic (one take, a quiet room, a phone voice memo is fine).</p>
   <form id="f" class="card">
     <div class="grid g2">
       <label>Video title<input name="title" required maxlength="120" placeholder="Counting with Recurrences"></label>
@@ -156,6 +158,12 @@ function newView() {
     <div id="m"></div>
     <div class="actions"><button>Upload and start</button><span class="muted small">Next: we transcribe it, then you check the transcript.</span></div>
   </form>`;
+  api("GET", "/api/jobs").then(({ asrProvider: ap }) => {
+    asrProvider = ap || asrProvider;
+    document.getElementById("privacy").textContent += asrProvider === "assemblyai"
+      ? " Your audio is sent to AssemblyAI for transcription and deleted there afterwards; only text goes to Claude."
+      : " Your audio stays on this computer; only the transcript text goes to Claude.";
+  }).catch(() => {});
   document.getElementById("f").onsubmit = async (ev) => {
     ev.preventDefault();
     const fd = new FormData(ev.target);
@@ -191,7 +199,7 @@ function startStage(job, stage, extra) {
   };
   const go = async () => {
     const run = await pipeline();
-    return { analyse: () => run.analyse(job, ui, asrModel), plan: () => run.plan(job, ui),
+    return { analyse: () => run.analyse(job, ui, asrModel, asrProvider), plan: () => run.plan(job, ui),
       revise: () => run.revise(job, extra, ui), render: () => run.render(job, ui, asrModel) }[stage]();
   };
   go().then(() => { running.delete(job.id); if (r.warnings.length) job._warnings = r.warnings; refreshIfOpen(job.id); })
@@ -269,8 +277,10 @@ const FLOW = [["analysing", "Transcribe"], ["review-transcript", "Check transcri
   ["review-slides", "Review slides"], ["rendering", "Render"], ["done", "Download"]];
 async function jobView(id, keepScroll) {
   const y = window.scrollY;
-  const { job, showCost: sc } = await api("GET", `/api/jobs/${id}`).catch((e) => ({ job: null, e }));
+  const { job, showCost: sc, asrProvider: ap, asrModel: am } = await api("GET", `/api/jobs/${id}`).catch((e) => ({ job: null, e }));
   if (sc !== undefined) showCost = sc;
+  if (ap) asrProvider = ap;
+  if (am) asrModel = am;
   if (!job) { $app.innerHTML = `<h1>Video not found</h1><p><a href="#/videos">Back to my videos</a></p>`; return; }
   const prev = jobCache.get(id);
   if (prev) { job._error = prev._error; job._warnings = prev._warnings; }
@@ -467,14 +477,14 @@ async function usageView() {
     ${u.byUser.map((r) => `<tr><td>${esc(r.user)}</td><td class="num">${r.videos}</td><td class="num">${r.calls}</td><td class="num">${money(r.costUsd)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">No usage yet.</td></tr>`}</tbody></table>
     <h2>By stage and model</h2>
     <table><thead><tr><th>Stage</th><th>Model</th><th class="num">Calls</th><th class="num">Input tokens</th><th class="num">Output tokens</th><th class="num">Spent</th></tr></thead><tbody>
-    ${u.byStage.map((r) => `<tr><td>${esc(r.stage)}</td><td>${esc(r.model)}</td><td class="num">${r.calls}</td><td class="num">${r.input.toLocaleString()}</td><td class="num">${r.output.toLocaleString()}</td><td class="num">${money(r.costUsd)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No usage yet.</td></tr>`}</tbody></table>
+    ${u.byStage.map((r) => `<tr><td>${esc(r.stage)}</td><td>${esc(r.model)}</td><td class="num">${r.calls}</td>${r.audioSeconds ? `<td class="num" colspan="2">${(r.audioSeconds / 60).toFixed(1)} min of audio</td>` : `<td class="num">${r.input.toLocaleString()}</td><td class="num">${r.output.toLocaleString()}</td>`}<td class="num">${money(r.costUsd)}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">No usage yet.</td></tr>`}</tbody></table>
     <h2>By video</h2>
     <table><thead><tr><th>Video</th><th>User</th><th>Status</th><th class="num">Calls</th><th class="num">Spent</th></tr></thead><tbody>
     ${u.byJob.map((r) => `<tr><td>${esc(r.title)}</td><td>${esc(r.user)}</td><td>${r.status ? statusTag(r.status) : ""}</td><td class="num">${r.calls}</td><td class="num">${money(r.costUsd)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No usage yet.</td></tr>`}</tbody></table>
     <h2>Recent calls</h2>
-    <table><thead><tr><th>Time</th><th>User</th><th>Stage</th><th class="num">In / cache read / out</th><th class="num">Cost</th></tr></thead><tbody>
+    <table><thead><tr><th>Time</th><th>User</th><th>Stage</th><th class="num">Tokens in / cache read / out</th><th class="num">Cost</th></tr></thead><tbody>
     ${u.recent.map((r) => `<tr><td>${when(r.ts)}</td><td>${esc(r.user)}</td><td>${esc(r.stage)} <span class="muted small">${esc(r.model)}</span></td>
-      <td class="num">${(r.input + r.cacheWrite).toLocaleString()} / ${r.cacheRead.toLocaleString()} / ${r.output.toLocaleString()}</td><td class="num">${money(r.costUsd, 4)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No calls yet.</td></tr>`}</tbody></table>`;
+      <td class="num">${r.audioSeconds ? `${(r.audioSeconds / 60).toFixed(1)} min audio` : `${(r.input + r.cacheWrite).toLocaleString()} / ${r.cacheRead.toLocaleString()} / ${r.output.toLocaleString()}`}</td><td class="num">${money(r.costUsd, 4)}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">No calls yet.</td></tr>`}</tbody></table>`;
   document.getElementById("month").onchange = (e) => { location.hash = `#/admin/usage?month=${e.target.value}`; };
 }
 
@@ -533,16 +543,27 @@ async function usersView() {
 async function keysView() {
   $app.innerHTML = `<div class="eyebrow">Admin</div><h1>API keys</h1><div id="k">${loading("Loading keys")}</div>`;
   const { keys } = await api("GET", "/api/admin/keys");
-  document.getElementById("k").outerHTML = `
-    <p class="muted">Keys are encrypted on the server and never sent to anyone's browser. Every Claude call uses the active key and is metered.</p>
+  const NAMES = { anthropic: "Anthropic (Claude)", assemblyai: "AssemblyAI (transcription)" };
+  const table = (provider) => {
+    const mine = keys.filter((k) => (k.provider || "anthropic") === provider);
+    return `<h2>${NAMES[provider]}</h2>
     <table><thead><tr><th>Label</th><th>Key</th><th>Added</th><th>Status</th><th></th></tr></thead><tbody>
-    ${keys.map((k) => `<tr data-id="${esc(k.id)}"><td>${esc(k.label)}</td><td class="mono">sk-ant-…${esc(k.last4)}</td><td class="small">${when(k.addedAt)}<br>${esc(k.addedBy)}</td>
+    ${mine.map((k) => `<tr data-id="${esc(k.id)}"><td>${esc(k.label)}</td><td class="mono">${provider === "anthropic" ? "sk-ant-" : ""}…${esc(k.last4)}</td>
+      <td class="small">${when(k.addedAt)}<br>${esc(k.addedBy)}</td>
       <td>${k.active ? '<span class="status done">Active</span>' : `<button class="secondary" data-act="use">Make active</button>`}</td>
-      <td><button class="link" data-act="del">Remove</button></td></tr>`).join("") || `<tr><td colspan="5" class="muted">No keys yet. Nobody can make videos until you add one.</td></tr>`}</tbody></table>
+      <td><button class="link" data-act="del">Remove</button></td></tr>`).join("") ||
+      `<tr><td colspan="5" class="muted">${provider === "anthropic" ? "No key yet. Nobody can make videos until you add one."
+        : "No key yet. Needed only if Settings → Transcription is set to AssemblyAI."}</td></tr>`}</tbody></table>`;
+  };
+  document.getElementById("k").outerHTML = `
+    <p class="muted">Keys are encrypted on the server and never sent to anyone's browser. Every call uses the active key for its service and is metered on the Usage page.</p>
+    ${table("anthropic")}${table("assemblyai")}
     <div id="m"></div>
     <h2>Add a key</h2>
-    <form id="add" class="card"><div class="grid g2"><label>Label<input name="label" placeholder="TLC budget key" required></label>
-      <label>Anthropic API key<input name="key" type="password" autocomplete="off" placeholder="sk-ant-…" required></label></div>
+    <form id="add" class="card"><div class="grid g3">
+      <label>Service<select name="provider"><option value="anthropic">Anthropic (Claude)</option><option value="assemblyai">AssemblyAI (transcription)</option></select></label>
+      <label>Label<input name="label" placeholder="TLC budget key" required></label>
+      <label>API key<input name="key" type="password" autocomplete="off" placeholder="sk-ant-… or AssemblyAI key" required></label></div>
       <div class="actions"><button>Add key</button></div></form>`;
   const m = document.getElementById("m");
   $app.querySelectorAll("tr[data-id]").forEach((tr) => {
@@ -572,14 +593,38 @@ async function settingsView() {
       <span>Show costs while making videos <span class="muted">(a live $ total as each Claude step finishes, plus the cost on each video. Admins always see costs on the Usage page.)</span></span></label><p class="small muted">When a cap is reached, new Claude calls are blocked until next month or until you raise it. A call already running finishes.</p></div>
     <div class="card"><h3>Models for each stage</h3><div class="grid g2">
       ${stages.map(([k, l]) => `<label>${l}<input name="stage:${k}" value="${esc(s.stageModels[k])}"></label>`).join("")}</div>
-      <label>Speech recognition model <span class="muted">(runs in the browser)</span>
+    </div>
+    <div class="card"><h3>Transcription</h3>
+      <p class="small muted">How narration is turned into text. You can switch at any time; videos already transcribed keep their transcript.</p>
+      <label class="switch"><input type="radio" name="asrProvider" value="browser" ${s.asrProvider !== "assemblyai" ? "checked" : ""}>
+        <span>In-browser Whisper — free <span class="muted">(audio never leaves the computer; downloads a speech model the first time; slide timing comes from pauses)</span></span></label>
+      <label class="switch"><input type="radio" name="asrProvider" value="assemblyai" ${s.asrProvider === "assemblyai" ? "checked" : ""}>
+        <span>AssemblyAI — metered, about $0.02 for a 5-minute video <span class="muted">(timing for every word, so slides and captions line up exactly; your script and tipsheet are sent as key terms; audio goes to AssemblyAI and the transcript is deleted there afterwards; needs an AssemblyAI key)</span></span></label>
+      <div id="asrwarn"></div>
+      <div class="grid g2">
+      <label>Whisper model <span class="muted">(in-browser option)</span>
         <select name="asrModel">${[["Xenova/whisper-small.en", "Whisper small (English) — most accurate, ~250 MB download"],
           ["Xenova/whisper-base.en", "Whisper base (English) — faster, ~80 MB"], ["Xenova/whisper-tiny.en", "Whisper tiny (English) — fastest, least accurate"]]
-          .map(([v, l]) => `<option value="${v}" ${s.asrModel === v ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
+          .map(([v, l]) => `<option value="${v}" ${s.asrModel === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>AssemblyAI prices <span class="muted">(USD per hour of audio, by model; key terms add a per-hour charge)</span>
+        <textarea name="transcriptionPrices" class="mono" rows="7">${esc(JSON.stringify(s.transcriptionPrices, null, 2))}</textarea></label>
+      </div></div>
     <div class="card"><h3>Prices (USD per million tokens)</h3>
       <p class="small muted">Used to work out costs from each response's token counts. Update these if Anthropic's prices change. Haiku's "long" prices apply when a prompt is over its threshold.</p>
       <textarea name="prices" class="mono" rows="14">${esc(JSON.stringify(s.prices, null, 2))}</textarea></div>
     <div id="m"></div><div class="actions"><button>Save settings</button></div></form>`;
+  // Warn if AssemblyAI is chosen without a key.
+  const checkAsrKey = async () => {
+    const choice = document.querySelector('input[name="asrProvider"]:checked')?.value;
+    const box = document.getElementById("asrwarn");
+    if (!box) return;
+    if (choice !== "assemblyai") { box.innerHTML = ""; return; }
+    const { keys } = await api("GET", "/api/admin/keys");
+    box.innerHTML = keys.some((k) => k.provider === "assemblyai" && k.active) ? ""
+      : `<div class="warn">No AssemblyAI key yet. Add one under <a href="#/admin/keys">API keys</a>, or new videos can't be transcribed.</div>`;
+  };
+  document.querySelectorAll('input[name="asrProvider"]').forEach((r) => (r.onchange = checkAsrKey));
+  checkAsrKey();
   document.getElementById("f").onsubmit = async (ev) => {
     ev.preventDefault();
     const f = form(ev.target);
@@ -587,10 +632,11 @@ async function settingsView() {
     try {
       const body = { monthlyCapUsd: f.monthlyCapUsd, defaultUserMonthlyLimitUsd: f.defaultUserMonthlyLimitUsd,
         defaultUserMonthlyVideoLimit: f.defaultUserMonthlyVideoLimit, asrModel: f.asrModel, stageModels: {}, prices: JSON.parse(f.prices),
-        showCost: f.showCost === "on" };
+        showCost: f.showCost === "on", asrProvider: f.asrProvider, transcriptionPrices: JSON.parse(f.transcriptionPrices) };
       for (const [k] of stages) body.stageModels[k] = f[`stage:${k}`];
       await api("PUT", "/api/admin/settings", body);
       m.innerHTML = `<div class="okmsg">Settings saved.</div>`;
+      checkAsrKey();
     } catch (e) { showErr(m, e); }
   };
 }

@@ -129,6 +129,9 @@ export const DEFAULT_SETTINGS = {
   defaultUserMonthlyLimitUsd: null,
   defaultUserMonthlyVideoLimit: null,
   asrModel: "Xenova/whisper-small.en",
+  // Transcription: "browser" (free Whisper on the user's computer) or "assemblyai" (metered API, word-level timing)
+  asrProvider: "browser",
+  assemblyaiModels: ["universal-3-5-pro", "universal-2"], // priority list sent as speech_models
   showCost: true, // show $ on video pages, including a live total while a video is being made
   stageModels: {
     "math-pass": "claude-haiku-5-5",
@@ -146,7 +149,12 @@ export const DEFAULT_SETTINGS = {
       long: { input: 0.5, output: 2.5, cacheWrite: 0.625, cacheRead: 0.05 },
     },
   },
-  keys: [], // [{id, label, last4, enc, active, addedAt, addedBy}]
+  // AssemblyAI is priced per hour of audio. Key terms (custom vocabulary) add a per-hour charge.
+  transcriptionPrices: {
+    perHour: { "universal-3-5-pro": 0.21, "universal-3-pro": 0.21, "universal-2": 0.15 },
+    keytermsPerHour: 0.05,
+  },
+  keys: [], // [{id, provider: "anthropic"|"assemblyai", label, last4, enc, active, addedAt, addedBy}]
 };
 export async function getSettings() {
   const s = (await settingsStore().get("config", { type: "json" })) || {};
@@ -154,10 +162,13 @@ export async function getSettings() {
     ...DEFAULT_SETTINGS, ...s,
     stageModels: { ...DEFAULT_SETTINGS.stageModels, ...(s.stageModels || {}) },
     prices: { ...DEFAULT_SETTINGS.prices, ...(s.prices || {}) },
-    keys: s.keys || [],
+    transcriptionPrices: { ...DEFAULT_SETTINGS.transcriptionPrices, ...(s.transcriptionPrices || {}) },
+    keys: (s.keys || []).map((k) => ({ provider: "anthropic", ...k })),
   };
 }
 export const saveSettings = (s) => settingsStore().setJSON("config", s);
+export const PROVIDERS = ["anthropic", "assemblyai"];
+export const activeKey = (s, provider = "anthropic") => s.keys.find((k) => (k.provider || "anthropic") === provider && k.active);
 
 export function costOf(prices, model, u) {
   let p = prices[model];

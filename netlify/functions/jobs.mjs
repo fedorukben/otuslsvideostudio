@@ -1,7 +1,7 @@
 // /api/jobs — a user's videos. The audio and the finished MP4 never come here;
 // only titles, settings, the transcript text and the slide spec are stored.
 import {
-  jobsStore, json, bad, body, requireUser, getSettings, newId, nowIso, monthOf, jobsForMonth, checkSpend,
+  jobsStore, json, bad, body, requireUser, getSettings, newId, nowIso, monthOf, jobsForMonth, checkSpend, activeKey,
 } from "../lib/lib.mjs";
 
 const STATUSES = ["new", "analysing", "review-transcript", "planning", "review-slides", "rendering", "done", "failed"];
@@ -20,6 +20,7 @@ export default async (req) => {
       return json({
         jobs: mine.map(summary).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
         asrModel: s.asrModel,
+        asrProvider: s.asrProvider,
         showCost: s.showCost !== false,
       });
     }
@@ -28,7 +29,10 @@ export default async (req) => {
       const b = await body(req);
       if (!b.title) return bad("Give the video a title");
       const s = await getSettings();
-      if (!s.keys.some((k) => k.active)) return bad("No API key has been set up yet. Ask an admin to add one.");
+      if (!activeKey(s, "anthropic")) return bad("No Anthropic API key has been set up yet. Ask an admin to add one.");
+      if (s.asrProvider === "assemblyai" && !activeKey(s, "assemblyai")) {
+        return bad("Transcription is set to AssemblyAI, but no AssemblyAI key has been added. Ask an admin to add one or switch back to in-browser Whisper.");
+      }
       const lim = user.monthlyVideoLimit ?? s.defaultUserMonthlyVideoLimit;
       if (lim != null) {
         const mine = (await jobsForMonth(monthOf())).filter((j) => j.owner === user.email).length;
@@ -50,7 +54,7 @@ export default async (req) => {
     if (id) {
       const job = await jobsStore().get(id, { type: "json" });
       if (!job || (job.owner !== user.email && user.role !== "admin")) return bad("Video not found", 404);
-      if (req.method === "GET") return json({ job, showCost: (await getSettings()).showCost !== false });
+      if (req.method === "GET") { const s = await getSettings(); return json({ job, showCost: s.showCost !== false, asrProvider: s.asrProvider, asrModel: s.asrModel }); }
       if (req.method === "PATCH") {
         if (job.owner !== user.email) return bad("Only the owner can change this video", 403);
         const b = await body(req);

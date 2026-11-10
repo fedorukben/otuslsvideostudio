@@ -19,7 +19,37 @@ function replyFor(body) {
   return "Hello from the mock Claude API.";
 }
 
+// ---- fake AssemblyAI ----
+// Words for dev/fixtures/test_voice7.m4a: a 3 s burst of "speech" every 4 s.
+const SENTENCES = ["Okay so today we count walls", "Picture a wall two units tall and n units long", "Look at the right hand end of the wall",
+  "So every wall of length n is one of these plus the walls with two flat dominoes", "Let's find a three and then a four and a five",
+  "A common mistake is to write a n equals a n minus one plus one", "So to recap here are three steps"];
+export const assemblyCalls = [];
+function fakeWords() {
+  const out = [];
+  SENTENCES.forEach((sent, i) => {
+    const ws = sent.split(" "), t0 = i * 4 + 0.1, dur = 2.8 / ws.length;
+    ws.forEach((w, k) => out.push({ text: w, start: Math.round((t0 + k * dur) * 1000), end: Math.round((t0 + (k + 0.8) * dur) * 1000), confidence: 0.97 }));
+  });
+  return out;
+}
+async function mockAssembly(url, init = {}) {
+  const u = new URL(url);
+  assemblyCalls.push({ method: init.method || "GET", path: u.pathname, body: typeof init.body === "string" ? JSON.parse(init.body) : { bytes: init.body?.length } });
+  const j = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { "content-type": "application/json" } });
+  if (u.pathname === "/v2/upload") return j({ upload_url: "https://cdn.assemblyai.example/upload/abc" });
+  if (u.pathname === "/v2/transcript" && init.method === "POST") return j({ id: "tr_123", status: "queued" });
+  if (u.pathname.startsWith("/v2/transcript/") && init.method === "DELETE") return j({ id: "tr_123", status: "deleted" });
+  if (u.pathname.startsWith("/v2/transcript/")) {
+    const words = fakeWords();
+    return j({ id: "tr_123", status: "completed", audio_duration: 28, speech_model_used: "universal-3-5-pro",
+      text: SENTENCES.join(". "), words });
+  }
+  return j({ error: "not mocked" }, 404);
+}
+
 export async function mockFetch(url, init) {
+  if (String(url).startsWith("https://api.assemblyai.com")) return mockAssembly(url, init);
   const body = JSON.parse(init.body);
   const text = replyFor(body);
   const events = [

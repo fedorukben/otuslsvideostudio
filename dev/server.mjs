@@ -19,6 +19,7 @@ globalThis.__SVS_STORE_FACTORY = (name) => {
   return {
     async get(k, o) { const v = m.get(k); if (v === undefined) return null; return o?.type === "json" ? JSON.parse(v) : v; },
     async setJSON(k, v) { m.set(k, JSON.stringify(v)); },
+    async set(k, v) { m.set(k, v); },
     async delete(k) { m.delete(k); },
     async list(o = {}) { return { blobs: [...m.keys()].filter((k) => !o.prefix || k.startsWith(o.prefix)).map((key) => ({ key })) }; },
   };
@@ -34,6 +35,8 @@ const routes = [
   [/^\/api\/admin\//, "admin.mjs"],
   [/^\/api\/jobs(\/|$)/, "jobs.mjs"],
   [/^\/api\/claude\//, "claude.mjs"],
+  [/^\/api\/transcribe\//, "transcribe.mjs"],
+  [/^\/\.netlify\/functions\/transcribe-run-background/, "transcribe-run-background.mjs", true],
   [/^\/\.netlify\/functions\/claude-run-background/, "claude-run-background.mjs", true],
 ];
 const types = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",

@@ -2,7 +2,7 @@
 import { api, claude } from "../api.js";
 import { getFile, putFile } from "../idb.js";
 import { decodeFile, toMono16k, speechChunks, slice } from "./audio.js";
-import { loadASR } from "./asr.js";
+import { loadASR, transcribeRemote, chunksFromWords, buildKeyterms } from "./asr.js";
 import * as P from "./prompts.js";
 import { checkSpec } from "./spec.js";
 import { renderAllBuilds, loadLogo, loadFonts, loadMathJax } from "./render.js";
@@ -31,20 +31,32 @@ async function save(job, patch) {
 const status = (ui, stage) => (st, sec) => ui.step?.(`${stage} — Claude is ${st === "running" ? "working" : st} (${sec}s)`);
 
 // ---------- Stage 1: analyse (audio prep, Whisper, math pass) ----------
-export async function analyse(job, ui, asrModel) {
+export async function analyse(job, ui, asrModel, asrProvider = "browser") {
   await save(job, { status: "analysing" });
   ui.step("Reading your audio");
-  const { samples } = await audioFor(job);
-  const chunks = speechChunks(samples);
-  if (!chunks.length) throw new Error("No speech found in the recording. Is it very quiet?");
-  ui.step("Loading the speech model (first time only: about 250 MB)");
-  const transcribe = await loadASR(asrModel, (p) => ui.progress(p, "Downloading speech model"));
-  for (let i = 0; i < chunks.length; i++) {
-    ui.step(`Transcribing (${i + 1} of ${chunks.length})`);
-    ui.progress(i / chunks.length, "Transcribing");
-    chunks[i].text = await transcribe(slice(samples, chunks[i].start, chunks[i].end));
+  const { samples, file, duration } = await audioFor(job);
+  let chunks;
+  if (asrProvider === "assemblyai") {
+    ui.step("Uploading your audio to AssemblyAI");
+    const r = await transcribeRemote(job.id, file, {
+      durationSec: duration, keyterms: buildKeyterms(job),
+      onProgress: (p) => ui.progress(p, "Uploading"),
+      onStatus: (st, sec) => ui.step(`Transcribing with AssemblyAI (${st === "running" ? "working" : st}, ${sec}s)`),
+    });
+    if (!r.words?.length) throw new Error("AssemblyAI didn't find any speech in the recording.");
+    chunks = chunksFromWords(r.words);
+  } else {
+    chunks = speechChunks(samples);
+    if (!chunks.length) throw new Error("No speech found in the recording. Is it very quiet?");
+    ui.step("Loading the speech model (first time only: about 250 MB)");
+    const transcribe = await loadASR(asrModel, (p) => ui.progress(p, "Downloading speech model"));
+    for (let i = 0; i < chunks.length; i++) {
+      ui.step(`Transcribing (${i + 1} of ${chunks.length})`);
+      ui.progress(i / chunks.length, "Transcribing");
+      chunks[i].text = await transcribe(slice(samples, chunks[i].start, chunks[i].end));
+    }
+    ui.progress(1, "Transcribing");
   }
-  ui.progress(1, "Transcribing");
   const spoken = chunks.filter((c) => c.text);
   ui.step("Turning spoken math into LaTeX (Haiku)");
   const r = await claude(job.id, "math-pass", {
@@ -55,7 +67,7 @@ export async function analyse(job, ui, asrModel) {
   const merged = spoken.map((c) => ({
     ...c, caption: got.get(c.id)?.caption || c.text, latex: got.get(c.id)?.latex || c.text, flags: got.get(c.id)?.flags || [],
   }));
-  await save(job, { status: "review-transcript", state: { chunks: merged } });
+  await save(job, { status: "review-transcript", state: { chunks: merged, asrProvider } });
 }
 
 // ---------- Stage 2: plan slides (Opus) + automatic fixes (Sonnet) ----------
@@ -115,7 +127,10 @@ export async function render(job, ui, asrModel) {
 
   ui.step("Matching each slide to your narration");
   let transcribe = null;
-  try { transcribe = await loadASR(asrModel, (p) => ui.progress(p, "Loading speech model")); } catch { /* fall back to estimates */ }
+  const hasWords = chunks.every((c) => Array.isArray(c.words) && c.words.length);
+  if (!hasWords) {
+    try { transcribe = await loadASR(asrModel, (p) => ui.progress(p, "Loading speech model")); } catch { /* fall back to estimates */ }
+  }
   const times = await buildTimes({ spec, chunks, samples, transcribe, onProgress: (p) => ui.progress(p, "Timing") });
 
   const lessonStart = Math.max(0, chunks[0].start - 0.5);

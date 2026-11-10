@@ -1,7 +1,7 @@
 // /api/admin/* — users, API keys, settings, metering. Admin role only.
 import {
   users, json, bad, body, requireUser, publicUser, emailKey, hashPassword, validPassword, nowIso,
-  getSettings, saveSettings, encrypt, newId, usageForMonth, jobsForMonth, monthOf,
+  getSettings, saveSettings, encrypt, newId, usageForMonth, jobsForMonth, monthOf, PROVIDERS,
 } from "../lib/lib.mjs";
 
 export default async (req) => {
@@ -68,23 +68,31 @@ export default async (req) => {
       if (req.method === "POST" && !id) {
         const b = await body(req);
         const key = String(b.key || "").trim();
-        if (!key.startsWith("sk-ant-")) return bad("That doesn't look like an Anthropic API key (it should start with sk-ant-)");
-        const k = { id: newId(), label: b.label || "API key", last4: key.slice(-4), enc: encrypt(key),
-          active: s.keys.length === 0, addedAt: nowIso(), addedBy: admin.email };
+        const provider = PROVIDERS.includes(b.provider) ? b.provider : "anthropic";
+        if (provider === "anthropic" && !key.startsWith("sk-ant-")) return bad("That doesn't look like an Anthropic API key (it should start with sk-ant-)");
+        if (provider === "assemblyai" && !/^[A-Za-z0-9_-]{20,}$/.test(key)) return bad("That doesn't look like an AssemblyAI API key");
+        const k = { id: newId(), provider, label: b.label || (provider === "assemblyai" ? "AssemblyAI key" : "Anthropic key"),
+          last4: key.slice(-4), enc: encrypt(key), active: !s.keys.some((x) => x.provider === provider && x.active),
+          addedAt: nowIso(), addedBy: admin.email };
         s.keys.push(k);
         await saveSettings(s);
         return json({ ok: true });
       }
       if (req.method === "PATCH" && id) {
         const b = await body(req);
-        if (b.active) s.keys.forEach((k) => (k.active = k.id === id));
+        const target = s.keys.find((k) => k.id === id);
+        if (!target) return bad("No such key", 404);
+        if (b.active) s.keys.forEach((k) => { if (k.provider === target.provider) k.active = k.id === id; });
         if (b.label) s.keys.forEach((k) => { if (k.id === id) k.label = b.label; });
         await saveSettings(s);
         return json({ ok: true });
       }
       if (req.method === "DELETE" && id) {
         s.keys = s.keys.filter((k) => k.id !== id);
-        if (s.keys.length && !s.keys.some((k) => k.active)) s.keys[0].active = true;
+        for (const p of PROVIDERS) {
+          const mine = s.keys.filter((k) => k.provider === p);
+          if (mine.length && !mine.some((k) => k.active)) mine[0].active = true;
+        }
         await saveSettings(s);
         return json({ ok: true });
       }
@@ -100,6 +108,14 @@ export default async (req) => {
           if (b[f] !== undefined) s[f] = num(b[f]);
         }
         if (typeof b.asrModel === "string" && b.asrModel) s.asrModel = b.asrModel;
+        if (["browser", "assemblyai"].includes(b.asrProvider)) s.asrProvider = b.asrProvider;
+        if (b.transcriptionPrices && typeof b.transcriptionPrices === "object") {
+          const tp = b.transcriptionPrices;
+          if (typeof tp.keytermsPerHour !== "number" || !tp.perHour || Object.values(tp.perHour).some((v) => typeof v !== "number")) {
+            return bad("Transcription prices need numeric perHour values and keytermsPerHour");
+          }
+          s.transcriptionPrices = tp;
+        }
         if (typeof b.showCost === "boolean") s.showCost = b.showCost;
         if (b.stageModels && typeof b.stageModels === "object") s.stageModels = { ...s.stageModels, ...b.stageModels };
         if (b.prices && typeof b.prices === "object") {
@@ -120,9 +136,9 @@ export default async (req) => {
       const [rows, jobs, s] = await Promise.all([usageForMonth(month), jobsForMonth(month), getSettings()]);
       if (url.searchParams.get("format") === "csv") {
         const head = ["timestamp", "user", "job_id", "job_title", "stage", "model", "input_tokens", "output_tokens",
-          "cache_write_tokens", "cache_read_tokens", "cost_usd"];
+          "cache_write_tokens", "cache_read_tokens", "audio_seconds", "cost_usd"];
         const lines = rows.map((r) => [r.ts, r.user, r.jobId, r.jobTitle, r.stage, r.model, r.input, r.output,
-          r.cacheWrite, r.cacheRead, (r.costUsd || 0).toFixed(6)].map(csv).join(","));
+          r.cacheWrite, r.cacheRead, r.audioSeconds ?? "", (r.costUsd || 0).toFixed(6)].map(csv).join(","));
         return new Response([head.join(","), ...lines].join("\n") + "\n", {
           headers: { "content-type": "text/csv", "content-disposition": `attachment; filename="sls-video-usage-${month}.csv"` },
         });
@@ -132,7 +148,8 @@ export default async (req) => {
       for (const r of rows) {
         const u = (byUser[r.user] ||= { user: r.user, costUsd: 0, calls: 0, videos: 0 });
         u.costUsd += r.costUsd || 0; u.calls++;
-        const st = (byStage[`${r.stage}|${r.model}`] ||= { stage: r.stage, model: r.model, costUsd: 0, calls: 0, input: 0, output: 0 });
+        const st = (byStage[`${r.stage}|${r.model}`] ||= { stage: r.stage, model: r.model, costUsd: 0, calls: 0, input: 0, output: 0, audioSeconds: 0 });
+        st.audioSeconds += r.audioSeconds || 0;
         st.costUsd += r.costUsd || 0; st.calls++; st.input += (r.input || 0) + (r.cacheRead || 0) + (r.cacheWrite || 0); st.output += r.output || 0;
         const j = (byJob[r.jobId] ||= { jobId: r.jobId, title: r.jobTitle, user: r.user, costUsd: 0, calls: 0 });
         j.costUsd += r.costUsd || 0; j.calls++;

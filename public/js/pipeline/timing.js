@@ -46,6 +46,11 @@ export async function buildTimes({ spec, chunks, samples, transcribe, onProgress
     if (!ch) { times.push(times.length ? times.at(-1) + 2 : 0); continue; }
     const text = ch.caption ?? ch.text ?? "";
     if (!b.start.phrase || startsWithScore(text, b.start.phrase) >= 0.67) { times.push(ch.start - 0.3); continue; }
+    // With word timings (AssemblyAI), find the phrase's first word directly.
+    if (ch.words?.length) {
+      const at = wordIndexOf(ch.words, b.start.phrase);
+      if (at >= 0) { times.push(ch.words[at].s - 0.2); continue; }
+    }
     const pos = phrasePosition(text, b.start.phrase);
     const est = pos == null ? ch.start : ch.start + pos * (ch.end - ch.start);
     // Candidate pauses inside the chunk near the estimate; verify by listening to 1.6 s after each.
@@ -72,6 +77,20 @@ export async function buildTimes({ spec, chunks, samples, transcribe, onProgress
   return times;
 }
 
+// Index of the word where `phrase` starts (best match of its first 4 words), or -1.
+export function wordIndexOf(words, phrase) {
+  const target = norm(phrase).slice(0, 4);
+  if (!target.length) return -1;
+  const ws = words.map((w) => norm(w.w)[0] || "");
+  let best = -1, bestScore = 0;
+  for (let i = 0; i < ws.length; i++) {
+    let sc = 0;
+    for (let k = 0; k < target.length; k++) if (ws[i + k] === target[k]) sc++;
+    if (sc > bestScore) { bestScore = sc; best = i; }
+  }
+  return bestScore >= Math.min(2, target.length) ? best : -1;
+}
+
 // Captions from what was actually said: each chunk split into ≤ 2-line pieces, timed by characters.
 export function buildCaptions(chunks) {
   const out = [];
@@ -79,6 +98,22 @@ export function buildCaptions(chunks) {
     const text = String(ch.caption ?? ch.text ?? "").replace(/\s+/g, " ").trim();
     if (!text) continue;
     const pieces = splitCaption(text, 140);
+    // Word timings (AssemblyAI) give exact caption times, as long as the caption text wasn't edited.
+    if (ch.words?.length && norm(text).join(" ") === norm(ch.words.map((w) => w.w).join(" ")).join(" ")) {
+      const tokenWord = []; // which timed word each normalised token came from
+      ch.words.forEach((w, i) => norm(w.w).forEach(() => tokenWord.push(i)));
+      let ti = 0;
+      for (const p of pieces) {
+        const n = Math.max(1, norm(p).length);
+        const first = ch.words[tokenWord[Math.min(ti, tokenWord.length - 1)]];
+        const last = ch.words[tokenWord[Math.min(ti + n - 1, tokenWord.length - 1)]];
+        out.push({ start: first.s, end: last.e, text: p });
+        ti += n;
+      }
+      // keep each caption up until the next one starts (no flicker between words)
+      for (let i = out.length - pieces.length; i < out.length - 1; i++) out[i].end = Math.max(out[i].end, out[i + 1].start);
+      continue;
+    }
     const total = pieces.reduce((a, p) => a + p.length, 0);
     let t = ch.start;
     const dur = ch.end - ch.start;

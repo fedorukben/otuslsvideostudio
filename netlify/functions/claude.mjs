@@ -2,7 +2,7 @@
 // The browser never sees the API key. It queues a request here; a background
 // function makes the call (up to 15 minutes), records usage and stores the reply.
 import {
-  reqStore, jobsStore, json, bad, body, requireUser, getSettings, checkSpend, newId, nowIso, internalToken,
+  reqStore, jobsStore, json, bad, body, requireUser, getSettings, checkSpend, newId, nowIso, internalToken, activeKey,
 } from "../lib/lib.mjs";
 import { runRequest } from "../lib/claude-run.mjs";
 
@@ -21,7 +21,7 @@ export default async (req, context) => {
       const capMsg = await checkSpend(user);
       if (capMsg) return bad(capMsg, 429);
       const s = await getSettings();
-      if (!s.keys.some((k) => k.active)) return bad("No API key has been set up. Ask an admin to add one.", 503);
+      if (!activeKey(s, "anthropic")) return bad("No Anthropic API key has been set up. Ask an admin to add one.", 503);
       const model = s.stageModels[b.stage];
       const r = b.request || {};
       if (!Array.isArray(r.messages) || !r.messages.length) return bad("Request needs messages");

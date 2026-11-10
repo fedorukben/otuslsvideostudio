@@ -1,6 +1,6 @@
 // Makes one queued Claude call, streams the reply, and records usage + cost.
 import {
-  reqStore, jobsStore, usageStore, getSettings, decrypt, costOf, nowIso, monthOf, newId,
+  reqStore, jobsStore, usageStore, getSettings, decrypt, costOf, nowIso, monthOf, newId, activeKey,
 } from "./lib.mjs";
 
 export async function runRequest(id) {
@@ -13,8 +13,8 @@ export async function runRequest(id) {
 
   try {
     const s = await getSettings();
-    const key = s.keys.find((k) => k.active);
-    if (!key) throw new Error("No active API key");
+    const key = activeKey(s, "anthropic");
+    if (!key) throw new Error("No active Anthropic API key");
     const apiKey = decrypt(key.enc);
     const req = r.request;
     const payload = {
