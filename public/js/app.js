@@ -1,5 +1,5 @@
 // SLS Video Studio — single-page app (no build step).
-import { api } from "./api.js";
+import { api, costListeners } from "./api.js";
 import { putFile, getFile, delFile } from "./idb.js";
 // The pipeline (and its large libraries) loads only when a video needs it,
 // so sign-in and admin pages work even if a library fails to load.
@@ -10,6 +10,7 @@ const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
 let me = null;
 let asrModel = "Xenova/whisper-small.en";
+let showCost = true; // admin setting: show $ on video pages
 const running = new Map(); // jobId -> {stage, step, progress, label, warnings[], error}
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -124,16 +125,17 @@ function passwordView(forced) {
 // ---------------- videos ----------------
 async function videosView() {
   $app.innerHTML = `<div class="eyebrow">Student Learning Support</div><h1>My videos</h1><div id="list">${loading("Loading your videos")}</div>`;
-  const { jobs, asrModel: m } = await api("GET", "/api/jobs");
+  const { jobs, asrModel: m, showCost: sc } = await api("GET", "/api/jobs");
   asrModel = m || asrModel;
+  showCost = sc !== false;
   const el = document.getElementById("list");
   if (!jobs.length) {
     el.innerHTML = `<div class="card"><p>No videos yet.</p><a class="btn" href="#/new">Make your first video</a></div>`;
     return;
   }
-  el.innerHTML = `<table><thead><tr><th>Title</th><th>Status</th><th>Created</th><th class="num">Cost</th></tr></thead><tbody>
+  el.innerHTML = `<table><thead><tr><th>Title</th><th>Status</th><th>Created</th>${showCost ? '<th class="num">Cost</th>' : ""}</tr></thead><tbody>
   ${jobs.map((j) => `<tr><td><a href="#/job/${esc(j.id)}">${esc(j.title)}</a>${running.has(j.id) ? ' <span class="pill">working…</span>' : ""}</td>
-    <td>${statusTag(j.status)}</td><td>${when(j.createdAt)}</td><td class="num">${money(j.costUsd)}</td></tr>`).join("")}</tbody></table>`;
+    <td>${statusTag(j.status)}</td><td>${when(j.createdAt)}</td>${showCost ? `<td class="num">${money(j.costUsd)}</td>` : ""}</tr>`).join("")}</tbody></table>`;
 }
 
 function newView() {
@@ -179,7 +181,8 @@ function newView() {
 // ---------------- stage runner ----------------
 function startStage(job, stage, extra) {
   if (running.has(job.id)) return;
-  const r = { stage, step: "Starting", progress: null, label: "", warnings: [], error: null, startedAt: Date.now() };
+  const r = { stage, step: "Starting", progress: null, label: "", warnings: [], error: null, startedAt: Date.now(),
+    cost: job.costUsd || 0, stageCost: 0, calls: job.calls || 0 };
   running.set(job.id, r);
   const ui = {
     step: (s) => { r.step = s; r.progress = null; paint(job.id); },
@@ -216,6 +219,7 @@ function paint(id) {
     <div class="progress ${pct == null ? "indeterminate" : ""}" id="rprog" role="progressbar" aria-label="${esc(r.step)}"
       ${pct == null ? "" : `aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"`}><div style="${pct == null ? "" : `width:${pct}%`}"></div></div>
     <div class="small muted" id="rlabel">${pct == null ? "" : `${esc(r.label)} ${pct}%`}</div>
+    ${showCost ? `<div class="livecost" id="rcost">${costLine(r)}</div>` : ""}
     ${r.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join("")}</div>`;
   tickElapsed();
 }
@@ -244,12 +248,29 @@ function paintProgress(id) {
   document.getElementById("rlabel").textContent = `${r.label} ${pct}%`;
 }
 
+// Live cost: each finished Claude call adds to the running total on screen.
+function costLine(r) {
+  return `<span class="k">Cost so far</span> <b>${money(r.cost)}</b>` +
+    (r.stageCost ? ` <span class="muted small">(+${money(r.stageCost)} this stage)</span>` : "");
+}
+costListeners.add((jobId, c) => {
+  const r = running.get(jobId);
+  if (!r) return;
+  r.cost += c; r.stageCost += c; r.calls += 1;
+  if (!showCost || openJobId() !== jobId) return;
+  const el = document.getElementById("rcost");
+  if (el) { el.innerHTML = costLine(r); el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
+  const jc = document.getElementById("jobcost"); if (jc) jc.textContent = money(r.cost);
+  const jn = document.getElementById("jobcalls"); if (jn) jn.textContent = r.calls;
+});
+
 // ---------------- job page ----------------
 const FLOW = [["analysing", "Transcribe"], ["review-transcript", "Check transcript"], ["planning", "Plan slides"],
   ["review-slides", "Review slides"], ["rendering", "Render"], ["done", "Download"]];
 async function jobView(id, keepScroll) {
   const y = window.scrollY;
-  const { job } = await api("GET", `/api/jobs/${id}`).catch((e) => ({ job: null, e }));
+  const { job, showCost: sc } = await api("GET", `/api/jobs/${id}`).catch((e) => ({ job: null, e }));
+  if (sc !== undefined) showCost = sc;
   if (!job) { $app.innerHTML = `<h1>Video not found</h1><p><a href="#/videos">Back to my videos</a></p>`; return; }
   const prev = jobCache.get(id);
   if (prev) { job._error = prev._error; job._warnings = prev._warnings; }
@@ -260,7 +281,7 @@ async function jobView(id, keepScroll) {
   const hasAudio = !!(await getFile(`audio:${id}`));
   $app.innerHTML = `<div class="eyebrow">${job.stream === "cp" ? "Coding and Programming" : "Mathematics"} · ${esc(job.eyebrow || "")}</div>
     <h1>${esc(job.title)}</h1>
-    <p class="muted small">${statusTag(job.status)} &nbsp; Created ${when(job.createdAt)} · Claude cost so far <b>${money(job.costUsd)}</b> (${job.calls || 0} calls)</p>
+    <p class="muted small">${statusTag(job.status)} &nbsp; Created ${when(job.createdAt)}${showCost ? ` · Claude cost so far <b id="jobcost">${money(r ? r.cost : job.costUsd)}</b> (<span id="jobcalls">${r ? r.calls : job.calls || 0}</span> calls)` : ""}</p>
     <div class="steps">${FLOW.map(([s, l], i) => `<div class="${i < nowIdx || job.status === "done" ? "done" : i === nowIdx ? "now" : ""}">${i + 1}. ${l}</div>`).join("")}</div>
     ${job._error ? `<div class="err"><b>Something went wrong:</b> ${esc(job._error)}</div>` : ""}
     ${(job._warnings || []).map((w) => `<div class="warn">${esc(w)}</div>`).join("")}
@@ -546,7 +567,9 @@ async function settingsView() {
       <label>Monthly cap for the whole site (USD) <span class="muted">(blank = no cap)</span><input name="monthlyCapUsd" type="number" min="0" step="1" value="${s.monthlyCapUsd ?? ""}"></label>
       <label>Default monthly $ limit per person <span class="muted">(blank = none)</span><input name="defaultUserMonthlyLimitUsd" type="number" min="0" step="0.5" value="${s.defaultUserMonthlyLimitUsd ?? ""}"></label>
       <label>Default monthly videos per person <span class="muted">(blank = none)</span><input name="defaultUserMonthlyVideoLimit" type="number" min="0" step="1" value="${s.defaultUserMonthlyVideoLimit ?? ""}"></label>
-    </div><p class="small muted">When a cap is reached, new Claude calls are blocked until next month or until you raise it. A call already running finishes.</p></div>
+    </div>
+    <label class="switch"><input type="checkbox" name="showCost" ${s.showCost !== false ? "checked" : ""}>
+      <span>Show costs while making videos <span class="muted">(a live $ total as each Claude step finishes, plus the cost on each video. Admins always see costs on the Usage page.)</span></span></label><p class="small muted">When a cap is reached, new Claude calls are blocked until next month or until you raise it. A call already running finishes.</p></div>
     <div class="card"><h3>Models for each stage</h3><div class="grid g2">
       ${stages.map(([k, l]) => `<label>${l}<input name="stage:${k}" value="${esc(s.stageModels[k])}"></label>`).join("")}</div>
       <label>Speech recognition model <span class="muted">(runs in the browser)</span>
@@ -563,7 +586,8 @@ async function settingsView() {
     const m = document.getElementById("m");
     try {
       const body = { monthlyCapUsd: f.monthlyCapUsd, defaultUserMonthlyLimitUsd: f.defaultUserMonthlyLimitUsd,
-        defaultUserMonthlyVideoLimit: f.defaultUserMonthlyVideoLimit, asrModel: f.asrModel, stageModels: {}, prices: JSON.parse(f.prices) };
+        defaultUserMonthlyVideoLimit: f.defaultUserMonthlyVideoLimit, asrModel: f.asrModel, stageModels: {}, prices: JSON.parse(f.prices),
+        showCost: f.showCost === "on" };
       for (const [k] of stages) body.stageModels[k] = f[`stage:${k}`];
       await api("PUT", "/api/admin/settings", body);
       m.innerHTML = `<div class="okmsg">Settings saved.</div>`;

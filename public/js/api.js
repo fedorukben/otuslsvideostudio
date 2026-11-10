@@ -17,6 +17,9 @@ export async function api(method, path, body) {
   return data;
 }
 
+// Listeners told about each finished call's cost: (jobId, costUsd) => void
+export const costListeners = new Set();
+
 // Runs one Claude stage through the metered proxy and waits for the reply.
 export async function claude(jobId, stage, request, { onStatus, signal } = {}) {
   const { id } = await api("POST", "/api/claude/start", { jobId, stage, request });
@@ -28,7 +31,7 @@ export async function claude(jobId, stage, request, { onStatus, signal } = {}) {
     delay = Math.min(4000, delay * 1.3);
     const r = await api("GET", `/api/claude/result?id=${encodeURIComponent(id)}`);
     onStatus?.(r.status, Math.round((Date.now() - t0) / 1000));
-    if (r.status === "done") return r;
+    if (r.status === "done") { for (const f of costListeners) try { f(jobId, r.costUsd || 0); } catch {} return r; }
     if (r.status === "error") throw new Error(r.error || "Claude call failed");
     if (Date.now() - t0 > 16 * 60 * 1000) throw new Error("Claude call timed out");
   }

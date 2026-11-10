@@ -126,3 +126,13 @@ video { width: 100%; background: #000; display: block; }
   .loader span { animation: none; transform: scale(1); }
   .progress.indeterminate > div { animation: none; width: 100%; opacity: .35; }
 }
+
+/* live cost */
+.livecost { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 15px; }
+.livecost .k { font: 400 13px "Ubuntu Condensed"; letter-spacing: 1px; text-transform: uppercase; color: var(--grey); margin-right: 6px; }
+.livecost b { color: var(--navy); font-variant-numeric: tabular-nums; }
+.livecost.bump b { animation: svs-bump .6s ease-out; }
+@keyframes svs-bump { 0% { color: var(--tan); } 100% { color: var(--navy); } }
+label.switch { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; margin-top: 16px; }
+label.switch input { margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .livecost.bump b { animation: none; } }

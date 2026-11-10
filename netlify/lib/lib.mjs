@@ -129,6 +129,7 @@ export const DEFAULT_SETTINGS = {
   defaultUserMonthlyLimitUsd: null,
   defaultUserMonthlyVideoLimit: null,
   asrModel: "Xenova/whisper-small.en",
+  showCost: true, // show $ on video pages, including a live total while a video is being made
   stageModels: {
     "math-pass": "claude-haiku-5-5",
     "plan": "claude-opus-5-5",

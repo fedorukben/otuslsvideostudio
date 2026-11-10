@@ -51,7 +51,10 @@ with sync_playwright() as p:
     pg.wait_for_selector(".thumb img", timeout=120000)
     pg.click("text=Approve and render")
     pg.wait_for_selector("#runbox h3", timeout=60000)
-    time.sleep(3)
+    pg.wait_for_selector("#rcost", timeout=60000)
+    pg.wait_for_function("document.querySelector('#rprog:not(.indeterminate)')", timeout=120000)
+    print("live cost shown:", pg.inner_text("#rcost"), "| header:", pg.inner_text("#jobcost"))
+    pg.screenshot(path=f"{shots}/ui_06b_livecost.png")
     pg.screenshot(path=f"{shots}/ui_06_rendering.png")
     pg.wait_for_selector("text=Your video is ready", timeout=600000)
     time.sleep(1)
@@ -69,6 +72,13 @@ with sync_playwright() as p:
     pg.screenshot(path=f"{shots}/ui_09_users.png", full_page=True)
     pg.goto(BASE + "/#/admin/settings"); pg.wait_for_selector("text=Prices")
     pg.screenshot(path=f"{shots}/ui_10_settings.png", full_page=True)
+    # turn costs off and check the video pages hide them
+    pg.uncheck("input[name=showCost]"); pg.click("text=Save settings"); pg.wait_for_selector("text=Settings saved")
+    pg.goto(BASE + "/#/videos"); pg.wait_for_selector("text=Counting with Recurrences")
+    assert pg.locator("th:has-text('Cost')").count() == 0, "cost column should be hidden"
+    pg.click("text=Counting with Recurrences"); pg.wait_for_selector("text=Your video is ready")
+    assert pg.locator("text=Claude cost so far").count() == 0, "cost line should be hidden"
+    print("cost hidden when the setting is off")
     print("ERRORS:", errs)
     b.close()
 print("E2E DONE")

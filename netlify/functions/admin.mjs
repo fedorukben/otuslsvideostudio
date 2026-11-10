@@ -100,6 +100,7 @@ export default async (req) => {
           if (b[f] !== undefined) s[f] = num(b[f]);
         }
         if (typeof b.asrModel === "string" && b.asrModel) s.asrModel = b.asrModel;
+        if (typeof b.showCost === "boolean") s.showCost = b.showCost;
         if (b.stageModels && typeof b.stageModels === "object") s.stageModels = { ...s.stageModels, ...b.stageModels };
         if (b.prices && typeof b.prices === "object") {
           for (const [m, p] of Object.entries(b.prices)) {
