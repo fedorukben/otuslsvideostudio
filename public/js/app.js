@@ -19,6 +19,8 @@ const fmtT = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart
 const STATUS_TEXT = { new: "Uploaded", analysing: "Transcribing", "review-transcript": "Check transcript", planning: "Planning slides",
   "review-slides": "Review slides", rendering: "Rendering", done: "Done", failed: "Needs attention" };
 const statusTag = (s) => `<span class="status ${esc(s)}">${esc(STATUS_TEXT[s] || s)}</span>`;
+const loader = `<span class="loader" aria-hidden="true"><span></span><span></span><span></span></span>`;
+const loading = (text = "Loading") => `<div class="loading" role="status">${loader}<span>${esc(text)}…</span></div>`;
 function form(el) { return Object.fromEntries(new FormData(el).entries()); }
 function showErr(where, e) { where.innerHTML = `<div class="err">${esc(e.message || e)}</div>`; }
 
@@ -121,7 +123,7 @@ function passwordView(forced) {
 
 // ---------------- videos ----------------
 async function videosView() {
-  $app.innerHTML = `<div class="eyebrow">Student Learning Support</div><h1>My videos</h1><div id="list" class="muted">Loading…</div>`;
+  $app.innerHTML = `<div class="eyebrow">Student Learning Support</div><h1>My videos</h1><div id="list">${loading("Loading your videos")}</div>`;
   const { jobs, asrModel: m } = await api("GET", "/api/jobs");
   asrModel = m || asrModel;
   const el = document.getElementById("list");
@@ -177,7 +179,7 @@ function newView() {
 // ---------------- stage runner ----------------
 function startStage(job, stage, extra) {
   if (running.has(job.id)) return;
-  const r = { stage, step: "Starting", progress: null, label: "", warnings: [], error: null };
+  const r = { stage, step: "Starting", progress: null, label: "", warnings: [], error: null, startedAt: Date.now() };
   running.set(job.id, r);
   const ui = {
     step: (s) => { r.step = s; r.progress = null; paint(job.id); },
@@ -208,18 +210,38 @@ function paint(id) {
   if (!box || openJobId() !== id) return;
   const r = running.get(id);
   if (!r) return;
-  box.innerHTML = `<div class="card"><div class="eyebrow">Working — keep this tab open</div><h3 id="rstep">${esc(r.step)}</h3>
-    <div class="progress" id="rprog" style="${r.progress == null ? "display:none" : ""}"><div style="width:${(r.progress || 0) * 100}%"></div></div>
-    <div class="small muted" id="rlabel">${r.progress == null ? "" : `${esc(r.label)} ${Math.round(r.progress * 100)}%`}</div>
+  const pct = r.progress == null ? null : Math.round(r.progress * 100);
+  box.innerHTML = `<div class="card"><div class="eyebrow">Working — keep this tab open</div>
+    <div class="runhead">${loader}<h3 id="rstep">${esc(r.step)}</h3><span class="elapsed" id="relapsed"></span></div>
+    <div class="progress ${pct == null ? "indeterminate" : ""}" id="rprog" role="progressbar" aria-label="${esc(r.step)}"
+      ${pct == null ? "" : `aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"`}><div style="${pct == null ? "" : `width:${pct}%`}"></div></div>
+    <div class="small muted" id="rlabel">${pct == null ? "" : `${esc(r.label)} ${pct}%`}</div>
     ${r.warnings.map((w) => `<div class="warn">${esc(w)}</div>`).join("")}</div>`;
+  tickElapsed();
+}
+// Elapsed time for the running stage, updated every second.
+let elapsedTimer = null;
+function tickElapsed() {
+  clearInterval(elapsedTimer);
+  const upd = () => {
+    const el = document.getElementById("relapsed");
+    const r = running.get(openJobId());
+    if (!el || !r) { clearInterval(elapsedTimer); return; }
+    const s = Math.floor((Date.now() - r.startedAt) / 1000);
+    el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} elapsed`;
+  };
+  upd();
+  elapsedTimer = setInterval(upd, 1000);
 }
 function paintProgress(id) {
   const r = running.get(id);
   const bar = document.getElementById("rprog");
   if (!bar || !r || openJobId() !== id) return paint(id);
-  bar.style.display = "";
+  const pct = Math.round(r.progress * 100);
+  bar.classList.remove("indeterminate");
+  bar.setAttribute("aria-valuemin", "0"); bar.setAttribute("aria-valuemax", "100"); bar.setAttribute("aria-valuenow", String(pct));
   bar.firstElementChild.style.width = `${r.progress * 100}%`;
-  document.getElementById("rlabel").textContent = `${r.label} ${Math.round(r.progress * 100)}%`;
+  document.getElementById("rlabel").textContent = `${r.label} ${pct}%`;
 }
 
 // ---------------- job page ----------------
@@ -329,7 +351,7 @@ async function transcriptReview(job, st) {
 
 // ----- Checkpoint B -----
 async function slideReview(job, st) {
-  st.innerHTML = `<h2>Checkpoint B: review the slides</h2><p class="muted">Drawing every slide…</p>`;
+  st.innerHTML = `<h2>Checkpoint B: review the slides</h2>${loading("Drawing every slide")}`;
   const thumbs = await (await pipeline()).thumbnails(job, 640);
   const spec = job.state.spec;
   const chunkById = new Map((job.state.chunks || []).map((c) => [c.id, c]));
@@ -404,7 +426,7 @@ async function doneView(job, st) {
 async function usageView() {
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
   const month = params.get("month") || new Date().toISOString().slice(0, 7);
-  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>Usage and spending</h1><div id="u" class="muted">Loading…</div>`;
+  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>Usage and spending</h1><div id="u">${loading("Adding up this month")}</div>`;
   const u = await api("GET", `/api/admin/usage?month=${month}`);
   const pct = u.capUsd ? Math.min(100, (u.totalUsd / u.capUsd) * 100) : 0;
   const months = [...Array(12)].map((_, i) => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - i); return d.toISOString().slice(0, 7); });
@@ -437,7 +459,7 @@ async function usageView() {
 
 // ---------------- admin: users ----------------
 async function usersView() {
-  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>Users</h1><div id="u" class="muted">Loading…</div>`;
+  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>Users</h1><div id="u">${loading("Loading people")}</div>`;
   const { users } = await api("GET", "/api/admin/users");
   const lim = (v) => (v == null ? "" : v);
   document.getElementById("u").outerHTML = `
@@ -488,7 +510,7 @@ async function usersView() {
 
 // ---------------- admin: keys ----------------
 async function keysView() {
-  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>API keys</h1><div id="k" class="muted">Loading…</div>`;
+  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>API keys</h1><div id="k">${loading("Loading keys")}</div>`;
   const { keys } = await api("GET", "/api/admin/keys");
   document.getElementById("k").outerHTML = `
     <p class="muted">Keys are encrypted on the server and never sent to anyone's browser. Every Claude call uses the active key and is metered.</p>
@@ -515,7 +537,7 @@ async function keysView() {
 
 // ---------------- admin: settings ----------------
 async function settingsView() {
-  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>Settings</h1><div id="s" class="muted">Loading…</div>`;
+  $app.innerHTML = `<div class="eyebrow">Admin</div><h1>Settings</h1><div id="s">${loading("Loading settings")}</div>`;
   const { settings: s } = await api("GET", "/api/admin/settings");
   const stages = [["math-pass", "Math pass (spoken math → LaTeX)"], ["plan", "Slide planning"], ["fix", "Automatic spec fixes"],
     ["revise", "Applying review comments"], ["frame-check", "Final frame check"]];

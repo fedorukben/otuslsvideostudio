@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dev/out/
 .netlify/
 # Built on deploy by scripts/vendor.mjs

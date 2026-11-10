@@ -102,3 +102,27 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .thumb .bad { color: var(--bad); font-size: 13px; }
 video { width: 100%; background: #000; display: block; }
 .pill { display: inline-block; padding: 1px 8px; background: #EEF2F6; font-size: 13px; margin-right: 6px; }
+
+/* ---------- loading animation: the Ontario Tech corner arrow builds square by square ---------- */
+.loader { display: inline-grid; grid-template-columns: repeat(2, var(--sq, 12px)); grid-template-rows: repeat(2, var(--sq, 12px)); vertical-align: middle; }
+.loader span { background: var(--tan); transform: scale(0); animation: svs-build 1.6s cubic-bezier(.5, 0, .3, 1) infinite; }
+.loader span:nth-child(1) { grid-area: 1 / 1; animation-delay: 0s; }
+.loader span:nth-child(2) { grid-area: 1 / 2; animation-delay: .16s; }
+.loader span:nth-child(3) { grid-area: 2 / 2; animation-delay: .32s; }
+@keyframes svs-build {
+  0% { transform: scale(0); } 18%, 62% { transform: scale(1); } 80%, 100% { transform: scale(0); }
+}
+.loading { display: flex; align-items: center; gap: 14px; color: var(--grey); padding: 18px 0; }
+.loading.big { flex-direction: column; justify-content: center; min-height: 60vh; gap: 22px; text-align: center; }
+.loading.big .loader { --sq: 30px; }
+.loading.big .t { font: 400 15px "Ubuntu Condensed"; letter-spacing: 3px; text-transform: uppercase; color: var(--navy); }
+.runhead { display: flex; align-items: center; gap: 14px; }
+.runhead h3 { margin: 0; }
+.elapsed { margin-left: auto; font: 400 14px "Ubuntu Condensed"; letter-spacing: 1px; color: var(--grey); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.progress.indeterminate > div { width: 28%; animation: svs-sweep 1.5s ease-in-out infinite; transition: none; }
+@keyframes svs-sweep { 0% { transform: translateX(-110%); } 100% { transform: translateX(370%); } }
+.progress { overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+  .loader span { animation: none; transform: scale(1); }
+  .progress.indeterminate > div { animation: none; width: 100%; opacity: .35; }
+}
