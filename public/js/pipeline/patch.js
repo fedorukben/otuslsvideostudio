@@ -2,7 +2,7 @@
 // Everything happens in this browser: the narration is decoded, the line is cut out at the pauses around it,
 // the chosen take is level-matched and spliced in, and the result is saved as the video's audio (WAV).
 // The original recording is kept so every patch can be undone.
-import { api, costListeners } from "../api.js";
+import { api, costListeners, emitCall } from "../api.js";
 import { getFile, putFile, delFile } from "../idb.js";
 
 const SR = 48000;
@@ -120,7 +120,10 @@ export async function makeTake(job, i, text) {
   const chunks = job.state.chunks;
   const previousText = chunks.slice(Math.max(0, i - 2), i).map(lineText).join(" ");
   const nextText = chunks.slice(i + 1, i + 2).map(lineText).join(" ");
-  const r = await api("POST", "/api/voice/speak", { jobId: job.id, text, previousText, nextText, seed: Math.floor(Math.random() * 1e9) });
+  emitCall({ type: "start", jobId: job.id, stage: "voice", model: "elevenlabs" });
+  let r;
+  try { r = await api("POST", "/api/voice/speak", { jobId: job.id, text, previousText, nextText, seed: Math.floor(Math.random() * 1e9) }); }
+  finally { emitCall({ type: "end", jobId: job.id, stage: "voice", model: "elevenlabs" }); }
   for (const f of costListeners) try { f(job.id, r.costUsd || 0); } catch {}
   job.costUsd = (job.costUsd || 0) + (r.costUsd || 0);
   const bytes = Uint8Array.from(atob(r.audio), (ch) => ch.charCodeAt(0));

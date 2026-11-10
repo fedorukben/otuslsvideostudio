@@ -1,5 +1,5 @@
 // SLS Video Studio — single-page app (no build step).
-import { api, costListeners, callListeners } from "./api.js";
+import { api, costListeners, callListeners, emitCall } from "./api.js";
 import { putFile, getFile, delFile } from "./idb.js";
 // The pipeline (and its large libraries) loads only when a video needs it,
 // so sign-in and admin pages work even if a library fails to load.
@@ -249,13 +249,39 @@ function startStage(job, stage, extra) {
 }
 const openJobId = () => ((location.hash.match(/^#\/job\/([^/]+)/) || [])[1]);
 function refreshIfOpen(id) { if (openJobId() === id) jobView(id, true); }
+// ---------- Model indicator lights ----------
+// A small row of labels; each one's light turns orange while that service is working.
+const LIGHTS = ["HAIKU", "SONNET", "OPUS", "ASSEMBLYAI", "ELEVENLABS"];
+const active = new Map(); // light -> number of calls running
+const lightOf = (ev) => {
+  const m = String(ev.model || ""), st = ev.stage;
+  if (st === "transcribe") return "ASSEMBLYAI";
+  if (st === "voice" || /elevenlabs/i.test(m)) return "ELEVENLABS";
+  return /haiku/i.test(m) ? "HAIKU" : /sonnet/i.test(m) ? "SONNET" : /opus/i.test(m) ? "OPUS" : null;
+};
+const lightsHtml = () => `<span class="lights" aria-label="Services in use">${LIGHTS.map((l) =>
+  `<span class="light ${active.get(l) ? "on" : ""}" data-light="${l}" title="${l}${active.get(l) ? " is working" : ""}"><i></i>${l}</span>`).join("")}</span>`;
+function paintLights() {
+  document.querySelectorAll(".light[data-light]").forEach((el) => {
+    const on = !!active.get(el.dataset.light);
+    el.classList.toggle("on", on);
+    el.title = `${el.dataset.light}${on ? " is working" : ""}`;
+  });
+}
+callListeners.add((ev) => {
+  const l = lightOf(ev);
+  if (!l) return;
+  active.set(l, Math.max(0, (active.get(l) || 0) + (ev.type === "start" ? 1 : -1)));
+  paintLights();
+});
+
 function paint(id) {
   const box = document.getElementById("runbox");
   if (!box || openJobId() !== id) return;
   const r = running.get(id);
   if (!r) return;
   const pct = r.progress == null ? null : Math.round(r.progress * 100);
-  box.innerHTML = `<div class="card"><div class="eyebrow">Working — keep this tab open</div>
+  box.innerHTML = `<div class="card"><div class="cardtop"><div class="eyebrow">Working — keep this tab open</div>${lightsHtml()}</div>
     <div class="runhead">${loader}<h3 id="rstep">${esc(r.step)}</h3><span class="elapsed" id="relapsed"></span></div>
     <div class="progress ${pct == null ? "indeterminate" : ""}" id="rprog" role="progressbar" aria-label="${esc(r.step)}"
       ${pct == null ? "" : `aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"`}><div style="${pct == null ? "" : `width:${pct}%`}"></div></div>
@@ -905,7 +931,7 @@ async function voiceView() {
       <div class="actions"><button class="secondary" id="vsave">Save settings</button><button class="link" id="vreset">Back to defaults</button></div>
       <label>Try it <span class="muted">(each try costs about ${per(120)})</span>
         <textarea id="vtest" rows="2" maxlength="600">Okay, so let's check our answer. It's not the first step that matters most here, it's the **last** one.</textarea></label>
-      <div class="actions"><button id="vplay">Say it</button><span class="small muted" id="vcost"></span></div><div id="vtake"></div></div>` : ""}`
+      <div class="actions"><button id="vplay">Say it</button><span class="small muted" id="vcost"></span>${lightsHtml()}</div><div id="vtake"></div></div>` : ""}`
     : vo.hasVoice ? `<div class="card"><p>Your voice is turned off, so it can't be used, but it's still kept at ElevenLabs.</p>
         <div class="actions"><button class="danger" id="vdel">Delete my voice</button></div></div>` : ""}
     <div id="vm"></div>`;
@@ -984,7 +1010,9 @@ async function voiceView() {
       await api("PUT", "/api/voice/me", { settings: vals() });
       out.innerHTML = loading("Saying it in your voice");
       const text = document.getElementById("vtest").value.replace(/\*\*/g, "");
-      const r = await api("POST", "/api/voice/speak", { text });
+      emitCall({ type: "start", stage: "voice", model: "elevenlabs" });
+      let r;
+      try { r = await api("POST", "/api/voice/speak", { text }); } finally { emitCall({ type: "end", stage: "voice", model: "elevenlabs" }); }
       const bytes = Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: r.mime }));
       out.innerHTML = `<audio controls autoplay src="${url}"></audio>`;
@@ -1135,7 +1163,7 @@ async function patchPanel(job, host) {
       <p>${esc(line(c))}</p><div id="orig">${loading("Loading your recording")}</div>
       <label>What it should say <span class="muted">(write numbers and symbols the way you'd say them)</span>
         <textarea id="ptext" rows="3" maxlength="600">${esc(line(c))}</textarea></label>
-      <div class="actions"><button id="ptakes">Make 3 takes</button><span class="small muted" id="pest"></span><button class="link" id="pclose">Close</button></div>
+      <div class="actions"><button id="ptakes">Make 3 takes</button><span class="small muted" id="pest"></span><button class="link" id="pclose">Close</button>${lightsHtml()}</div>
       <div id="takes"></div></div>`;
     const ta = ed.querySelector("#ptext"), est = ed.querySelector("#pest");
     const upd = () => (est.textContent = `about ${money(per(3 * ta.value.trim().length), 4)}`);

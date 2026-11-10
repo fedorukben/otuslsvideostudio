@@ -178,3 +178,14 @@ label.switch.big { margin-top: 0; }
 .card.clean h4 { margin: 20px 0 6px; }
 .fsrow .adj { display: block; margin-top: 4px; }
 .fsrow .adj input { width: 90px; display: inline-block; padding: 3px 6px; margin: 0 4px; }
+
+/* Model indicator lights */
+.cardtop { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cardtop .eyebrow { margin: 0; }
+.lights { display: inline-flex; gap: 12px; flex-wrap: wrap; margin-left: auto; }
+.light { display: inline-flex; align-items: center; gap: 5px; font: 500 10px/1 "Ubuntu", system-ui, sans-serif; letter-spacing: .08em; color: #8A949C; }
+.light i { width: 7px; height: 7px; border-radius: 50%; background: #D5DCE3; transition: background .25s, box-shadow .25s; }
+.light.on { color: var(--ink); }
+.light.on i { background: var(--tan); box-shadow: 0 0 0 2px rgba(231, 93, 42, .18), 0 0 6px rgba(231, 93, 42, .7); }
+@media (prefers-reduced-motion: no-preference) { .light.on i { animation: lightpulse 1.4s ease-in-out infinite; } }
+@keyframes lightpulse { 50% { box-shadow: 0 0 0 3px rgba(231, 93, 42, .12), 0 0 9px rgba(231, 93, 42, .9); } }

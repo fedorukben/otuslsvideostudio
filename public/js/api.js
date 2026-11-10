@@ -26,8 +26,8 @@ export const emitCall = (ev) => { for (const f of callListeners) try { f(ev); } 
 // Runs one Claude stage through the metered proxy and waits for the reply.
 export async function claude(jobId, stage, request, { onStatus, signal } = {}) {
   const { id, model } = await api("POST", "/api/claude/start", { jobId, stage, request });
-  emitCall({ type: "start", jobId, stage });
-  try { return await waitFor(jobId, id, onStatus && ((st, sec) => onStatus(st, sec, model)), signal); } finally { emitCall({ type: "end", jobId, stage }); }
+  emitCall({ type: "start", jobId, stage, model });
+  try { return await waitFor(jobId, id, onStatus && ((st, sec) => onStatus(st, sec, model)), signal); } finally { emitCall({ type: "end", jobId, stage, model }); }
 }
 async function waitFor(jobId, id, onStatus, signal) {
   const t0 = Date.now();
