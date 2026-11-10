@@ -1,1 +1,83 @@
-# otuslsvideostudio
+# SLS Video Studio
+
+An internal Ontario Tech Student Learning Support site that turns a recorded narration into a finished explainer video: a 1920×1080 MP4 in Ontario Tech styling, with burnt-in captions, the official outro, and an `.srt` file.
+
+People sign in with email and a password. Admins manage users, API keys and spending caps, and see every Claude call metered by person, stage and video.
+
+## How it works
+
+| Step | Where it runs | Cost |
+| --- | --- | --- |
+| 1. Upload narration (M4A/MP3/WAV), title, stream, optional script, tipsheet and notes | Browser | free |
+| 2. Find pauses, transcribe with Whisper (transformers.js) | Browser | free |
+| 3. Math pass: spoken math to LaTeX, flag ambiguities and slips | Claude Haiku via the site | < $0.01 |
+| 4. **Checkpoint A**: you fix the transcript and the math | Browser | free |
+| 5. Slide planning: writes a slide *spec* (JSON), not code | Claude Opus via the site | ~$0.30–$0.60 |
+| 6. Spec check (LaTeX, layout, timing), auto-fixed up to 3 rounds | Browser + Claude Sonnet | $0–$0.25 |
+| 7. **Checkpoint B**: every slide shown; comment per scene | Browser (+ Sonnet for comments) | ~$0.10 per round |
+| 8. Timing: each build matched to the words you say | Browser (Whisper) | free |
+| 9. Render: slides (MathJax), captions, crossfades, white dip, outro; H.264 encode | Browser (WebCodecs) | free |
+| 10. Audio: highpass, loudnorm to −16 LUFS, fades, AAC, outro audio | Browser (ffmpeg.wasm) | free |
+| 11. Final check of key frames against the narration | Claude Haiku via the site | < $0.01 |
+
+**Privacy.** The audio and the finished MP4 never leave the user's computer; they're kept in the browser's IndexedDB. The server stores only accounts, settings, the transcript text, the slide spec and usage records (in Netlify Blobs). API keys are encrypted (AES-256-GCM) and never sent to a browser.
+
+**Claude calls.** The browser queues each call at `/api/claude/start`. A Netlify *background function* makes the call (it can run up to 15 minutes), records token usage and cost, and the browser polls for the reply. Spending caps are checked before every call.
+
+## Deploy to Netlify
+
+1. **Add the outro clip.** Copy the official `OT_Outro_White.mp4` to `public/assets/OT_Outro_White.mp4`. Without it, videos render with no outro and a warning. The reverse logo (`public/assets/logo-reverse.svg`) is already included, copied from the Ontario Tech design system.
+2. **Put the folder in a Git repository** (GitHub, for example) and create a Netlify site from it. Leave the build command blank; `netlify.toml` sets the publish folder (`public`) and the functions folder. You can also deploy with the Netlify CLI: `netlify deploy --prod`.
+3. **Set environment variables** (Site configuration → Environment variables):
+   - `JWT_SECRET`: a random string of 32+ characters (signs sign-in sessions).
+   - `ENCRYPTION_SECRET`: a different random string of 32+ characters (encrypts API keys). **Don't change it later**, or stored keys can't be decrypted and must be re-added.
+   - `SETUP_CODE`: a one-time code you'll type to create the first admin.
+
+   To make a random string: `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`
+4. **Check that background functions are available** on your Netlify plan. The Opus planning call can take a few minutes, longer than a normal function's limit. If your plan doesn't include them, set `SYNC_CLAUDE=true`; the short stages will work, but planning may time out.
+5. **Open the site.** You'll get *Create the admin account*: enter the setup code, your name, email and a password. This works only once.
+6. **As admin:** add an Anthropic API key under **API keys**, set the monthly cap under **Settings**, and add people under **Users**. New users get a temporary password and choose their own at first sign-in.
+
+## Using it
+
+- Use **Chrome or Edge** on a laptop or desktop. Keep the tab open while it's working.
+- The first transcription downloads the Whisper model (about 250 MB for *small*) from Hugging Face; after that it's cached. If campus networks block huggingface.co, pick a smaller model in Settings or test off-campus first.
+- **Download the MP4 and SRT when it finishes.** They're kept only in that browser. You can re-render from the approved slides any time (a few cents).
+- If a step fails, the video goes back to the previous checkpoint with the error shown, and nothing already paid for is lost.
+- Remember: brand@ontariotechu.ca asks to be contacted before the Ontario Tech name or logo is used in a project.
+
+## Admin metering
+
+**Usage** shows, per month: total spend against the cap, videos started, calls, and average per video. It breaks spend down by person, by stage and model (with token counts), and by video, lists recent calls, and has a CSV export.
+
+Caps:
+- **Site cap:** blocks new calls once the month's total reaches it.
+- **Per-person $ limit** and **per-person video limit:** set per user, or as defaults in Settings.
+
+Costs are worked out from each response's token counts (input, cache writes, cache reads, output) using the price table in **Settings**. The defaults are USD per million tokens, from November 2026: Opus 5.5 $4/$20, Sonnet 5.5 $2/$10, Haiku 5.5 $0.10/$0.50 (with higher rates for prompts over 100k tokens). Update the table if prices change.
+
+## Slide spec
+
+Claude writes JSON, and a fixed renderer draws it, so every video follows the same brand rules. Scenes are `title`, `content` or `summary`. Builds add, set or remove elements cumulatively, and each build is tied to a chunk of narration plus the first few words spoken there. Element types: `math` (optionally `boxed`), `text` (with inline `$math$`), `label`, `bullets`, `note`, `row` (side by side), `sequence` (tiles), `trap` (two ✗ rows and one ✓ row), and `step` (summary). Colour macros: `\blue{}`, `\orange{}`, `\navy{}`, `\grey{}`. You can download or hand-edit the spec at Checkpoint B.
+
+## Develop and test locally
+
+```
+npm install
+npm run dev            # http://localhost:8888 with in-memory storage and a mock Claude API
+npm run test:api       # in another terminal: auth, roles, keys, caps, metering, CSV
+python3 dev/e2e_test.py   # full UI run in Chrome with Playwright (mock ASR + mock Claude)
+```
+
+The dev server's setup code is `letmein`. The libraries in `public/vendor/` are copied from `node_modules` (see `devDependencies`), so the site has no build step.
+
+## Files
+
+```
+netlify/functions/   auth, admin, jobs, claude (+ claude-run-background)
+netlify/lib/         shared helpers: storage, sessions, encryption, pricing, the Claude call
+public/index.html, app.css, js/app.js        the interface
+public/js/pipeline/  audio, asr, prompts, spec, render, timing, encode, run
+public/vendor/       MathJax, ffmpeg.wasm, transformers.js, mp4-muxer, mp4box, Ubuntu fonts
+dev/                 local server, mock Claude, tests, fixtures
+```

@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<body>
+<script type="module">
+import { renderAllBuilds, loadLogo, drawCaption, W, H } from "/js/pipeline/render.js";
+const spec = await (await fetch("/dev-fixture/plan.txt")).json();
+spec.stream = "math";
+await loadLogo();
+const t0 = performance.now();
+const builds = await renderAllBuilds(spec);
+window.renderMs = performance.now() - t0;
+const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+const ctx = cv.getContext("2d");
+window.frames = builds.map((b, i) => {
+  ctx.clearRect(0, 0, W, H);
+  ctx.drawImage(b.bitmap, 0, 0);
+  if (i === 2) drawCaption(ctx, "Look at the right-hand end of the wall. There are only two ways the last column can be filled, so we split into two cases.");
+  return { scene: b.scene, build: b.build, errors: b.errors, png: cv.toDataURL("image/png") };
+});
+window.done = true;
+</script>

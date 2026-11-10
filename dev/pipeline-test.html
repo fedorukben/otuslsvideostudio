@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<body>
+<script type="module">
+import { renderAllBuilds, loadLogo } from "/js/pipeline/render.js";
+import { decodeFile, toMono16k, speechChunks } from "/js/pipeline/audio.js";
+import { buildTimes, buildCaptions, toSrt } from "/js/pipeline/timing.js";
+import { encodeVideo, muxAudio } from "/js/pipeline/encode.js";
+window.log = [];
+const L = (...a) => { window.log.push(a.join(" ")); console.log(...a); };
+try {
+  const spec = await (await fetch("/dev-fixture/plan.txt")).json();
+  spec.stream = "math";
+  await loadLogo();
+  const file = new File([await (await fetch("/dev-fixture/test_voice.m4a")).blob()], "voice.m4a", { type: "audio/mp4" });
+  const ab = await decodeFile(file);
+  const samples = await toMono16k(ab);
+  const chunks = speechChunks(samples);
+  L("chunks", JSON.stringify(chunks));
+  // fake transcript text for each chunk
+  const words = ["Okay so today we count walls", "Picture a wall two units tall", "Look at the right hand end", "So every wall splits plus the walls with two flat", "Let's find a three and then a four", "A common mistake is this", "So to recap here are three steps"];
+  chunks.forEach((c, i) => (c.caption = c.text = words[i % words.length]));
+  const t0 = performance.now();
+  const builds = await renderAllBuilds(spec);
+  const mockTranscribe = async () => "plus the walls with";
+  const times = await buildTimes({ spec, chunks, samples, transcribe: mockTranscribe });
+  L("times", JSON.stringify(times.map((t) => +t.toFixed(2))));
+  const lessonStart = Math.max(0, chunks[0].start - 0.5);
+  const lessonEnd = Math.min(ab.duration, chunks.at(-1).end + 1.0);
+  const duration = lessonEnd - lessonStart;
+  const caps = buildCaptions(chunks).map((c) => ({ ...c, start: c.start - lessonStart, end: c.end - lessonStart }));
+  const { video, hasOutro } = await encodeVideo({ builds, times: times.map((t) => Math.max(0, t - lessonStart)), captions: caps, duration,
+    outroUrl: "/dev-fixture/test_outro.mp4", onProgress: (p) => (window.encProgress = p) });
+  L("encoded video bytes", video.length, "outro", hasOutro, "ms", Math.round(performance.now() - t0));
+  const blob = await muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl: "/dev-fixture/test_outro.mp4" });
+  L("muxed bytes", blob.size, "total ms", Math.round(performance.now() - t0));
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s = ""; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  window.mp4b64 = btoa(s);
+  window.srt = toSrt(buildCaptions(chunks), lessonStart);
+} catch (e) { L("ERROR", e.stack || e); }
+window.done = true;
+</script>
