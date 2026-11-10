@@ -31,7 +31,15 @@ async function save(job, patch) {
   await api("PATCH", `/api/jobs/${job.id}`, patch);
 }
 
-const status = (ui, stage) => (st, sec) => ui.step?.(`${stage} — Claude is ${st === "running" ? "working" : st} (${sec}s)`);
+// "Slide planning — Opus is working". The elapsed time is shown beside the step, not in it.
+const modelName = (m) => (/opus/i.test(m) ? "Opus" : /sonnet/i.test(m) ? "Sonnet" : /haiku/i.test(m) ? "Haiku" : "Claude");
+const status = (ui, stage) => {
+  let last = "";
+  return (st, sec, model) => {
+    const text = `${stage} — ${modelName(model || "")} is ${st === "running" ? "working" : st}`;
+    if (text !== last) { last = text; ui.step?.(text); }
+  };
+};
 
 // ---------- Stage 1: analyse (audio prep, Whisper, math pass) ----------
 export async function analyse(job, ui, asrModel, asrProvider = "browser") {
@@ -44,7 +52,7 @@ export async function analyse(job, ui, asrModel, asrProvider = "browser") {
     const r = await transcribeRemote(job.id, file, {
       durationSec: duration, keyterms: buildKeyterms(job),
       onProgress: (p) => ui.progress(p, "Uploading"),
-      onStatus: (st, sec) => ui.step(`Transcribing with AssemblyAI (${st === "running" ? "working" : st}, ${sec}s)`),
+      onStatus: ((last) => (st) => { const t = `Transcribing with AssemblyAI (${st === "running" ? "working" : st})`; if (t !== last) { last = t; ui.step(t); } })(""),
     });
     if (!r.words?.length) throw new Error("AssemblyAI didn't find any speech in the recording.");
     chunks = chunksFromWords(r.words);
