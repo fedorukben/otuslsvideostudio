@@ -93,13 +93,17 @@ export async function mockFetch(url, init) {
   if (String(url).startsWith("https://api.assemblyai.com")) return mockAssembly(url, init);
   if (String(url).startsWith("https://api.elevenlabs.io")) return mockEleven(url, init);
   const body = JSON.parse(init.body);
-  const text = replyFor(body);
+  let text = replyFor(body), stop = "end_turn";
+  // MOCK_TRUNCATE=1: math-pass replies for more than 3 chunks are cut off, like a reply that hit max_tokens.
+  if (process.env.MOCK_TRUNCATE && /\[stage:math-pass\]/.test((body.system || []).map((b) => b.text).join("")) && JSON.parse(text).chunks.length > 3) {
+    text = text.slice(0, Math.floor(text.length * 0.6)); stop = "max_tokens"; console.log("mock: truncated a math-pass reply");
+  }
   // MOCK_SLOW=1 makes the planning call take 8 s, to test the live cost ticker.
   if (process.env.MOCK_SLOW && /\[stage:plan\]/.test((body.system || []).map((b) => b.text).join(""))) await new Promise((r) => setTimeout(r, 8000));
   const events = [
     { type: "message_start", message: { usage: { input_tokens: 1200, cache_creation_input_tokens: 800, cache_read_input_tokens: 0, output_tokens: 1 } } },
     ...text.match(/[\s\S]{1,200}/g).map((t) => ({ type: "content_block_delta", delta: { type: "text_delta", text: t } })),
-    { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: Math.ceil(text.length / 4) } },
+    { type: "message_delta", delta: { stop_reason: stop }, usage: { output_tokens: Math.ceil(text.length / 4) } },
   ];
   const sse = events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join("");
   return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });

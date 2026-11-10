@@ -62,15 +62,44 @@ export async function analyse(job, ui, asrModel, asrProvider = "browser") {
   }
   const spoken = chunks.filter((c) => c.text);
   ui.step("Turning spoken math into LaTeX (Haiku)");
-  const r = await claude(job.id, "math-pass", {
-    system: P.MATH_PASS, max_tokens: 12000,
-    messages: [{ role: "user", content: P.mathPassMessage(spoken, job.state.script) }],
-  }, { onStatus: status(ui, "Math pass") });
-  const got = new Map(P.parseJSON(r.text).chunks.map((c) => [c.id, c]));
+  const got = await mathPass(job, spoken, ui);
   const merged = spoken.map((c) => ({
     ...c, caption: got.get(c.id)?.caption || c.text, latex: got.get(c.id)?.latex || c.text, flags: got.get(c.id)?.flags || [],
   }));
   await save(job, { status: "review-transcript", state: { chunks: merged, asrProvider } });
+}
+
+// The math pass, in batches small enough that a reply is never cut off. A batch whose reply is cut off
+// or isn't valid JSON is split in half and tried again; a single chunk that still fails keeps its plain text.
+async function mathPass(job, spoken, ui, size = 15) {
+  const got = new Map();
+  const batches = [];
+  for (let i = 0; i < spoken.length; i += size) batches.push(spoken.slice(i, i + size));
+  let done = 0;
+  const run = async (batch) => {
+    let parsed = null;
+    try {
+      const r = await claude(job.id, "math-pass", {
+        system: P.MATH_PASS, max_tokens: 16000,
+        messages: [{ role: "user", content: P.mathPassMessage(batch, job.state.script) }],
+      }, { onStatus: status(ui, batches.length > 1 ? `Math pass (part ${Math.min(done + 1, batches.length)} of ${batches.length})` : "Math pass") });
+      if (r.stopReason !== "max_tokens") parsed = P.parseJSON(r.text);
+    } catch (e) {
+      if (!/JSON|Unexpected|end of data|expected/i.test(e.message)) throw e; // real failures (caps, network) stop here
+    }
+    if (parsed?.chunks) { for (const c of parsed.chunks) got.set(c.id, c); done++; return; }
+    if (batch.length > 1) {
+      const h = Math.ceil(batch.length / 2);
+      await run(batch.slice(0, h));
+      await run(batch.slice(h));
+      return;
+    }
+    ui.warn?.(`The math pass couldn't read one line (at ${Math.round(batch[0].start)} s), so it keeps the plain transcript. Check it at Checkpoint A.`);
+  };
+  // up to three batches at a time
+  const queue = [...batches];
+  await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => { while (queue.length) await run(queue.shift()); }));
+  return got;
 }
 
 // ---------- Stage 2: plan slides (Opus) + automatic fixes (Sonnet) ----------
