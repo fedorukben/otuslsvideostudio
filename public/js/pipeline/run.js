@@ -119,6 +119,13 @@ export async function revise(job, comments, ui) {
 }
 
 // ---------- Stage 3: timing, render, outro, final check ----------
+// Finished videos kept in memory too, in case this browser won't store them (private windows, full storage).
+export const outputs = new Map();
+const stepRun = async (label, fn) => {
+  try { return await fn(); }
+  catch (e) { console.error(label, e); throw new Error(`${label} failed: ${e?.message || e}`); }
+};
+
 export async function render(job, ui, asrModel) {
   await save(job, { status: "rendering" });
   const spec = { ...job.state.spec, stream: job.stream };
@@ -146,13 +153,13 @@ export async function render(job, ui, asrModel) {
   const builds = await renderAllBuilds(spec, (p) => ui.progress(p, "Drawing slides"));
 
   ui.step("Encoding video (keep this tab open)");
-  const { video, hasOutro, outroUrl } = await encodeVideo({ builds, times: t, captions: caps, duration,
-    onProgress: (p) => ui.progress(p, "Encoding video") });
+  const { video, hasOutro, outroUrl } = await stepRun("Encoding video", () => encodeVideo({ builds, times: t, captions: caps, duration,
+    onProgress: (p) => ui.progress(p, "Encoding video") }));
   if (!hasOutro) ui.warn?.("The Ontario Tech outro clip wasn't found at /assets/OT_Outro_White.mp4, so this video has no outro. Ask an admin to add it.");
 
   ui.step("Mixing audio and adding the outro");
-  const mp4 = await muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl,
-    onProgress: (p) => ui.progress(p, "Mixing audio") });
+  const mp4 = await stepRun("Mixing audio", () => muxAudio({ video, audioFile: file, audioStart: lessonStart, duration, hasOutro, outroUrl,
+    onProgress: (p) => ui.progress(p, "Mixing audio") }));
   const srt = toSrt(capsRaw, lessonStart);
 
   // Final check: one still just after each build change, with what's being said then.
@@ -177,9 +184,15 @@ export async function render(job, ui, asrModel) {
   } catch (e) { ui.warn?.("The final frame check didn't run: " + e.message); }
 
   const name = `${job.title.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "")}_OntarioTech`;
-  await putFile(`mp4:${job.id}`, mp4);
-  await putFile(`srt:${job.id}`, new Blob([srt], { type: "application/x-subrip" }));
-  await save(job, { status: "done", state: { output: { name, duration: duration + 7.2, sizeBytes: mp4.size, renderedAt: new Date().toISOString(), flags, times: t } } });
+  const srtBlob = new Blob([srt], { type: "application/x-subrip" });
+  outputs.set(job.id, { mp4, srt: srtBlob });
+  try {
+    await putFile(`mp4:${job.id}`, mp4);
+    await putFile(`srt:${job.id}`, srtBlob);
+  } catch (e) {
+    ui.warn?.("This browser wouldn't store the finished video (a private window or full storage?). Download it now from this page; it will be gone if you reload.");
+  }
+  await stepRun("Saving the result", () => save(job, { status: "done", state: { output: { name, duration: duration + 7.2, sizeBytes: mp4.size, renderedAt: new Date().toISOString(), flags, times: t } } }));
   return { mp4, srt, name, flags };
 }
 

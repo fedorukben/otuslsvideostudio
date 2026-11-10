@@ -52,6 +52,8 @@ export async function mockFetch(url, init) {
   if (String(url).startsWith("https://api.assemblyai.com")) return mockAssembly(url, init);
   const body = JSON.parse(init.body);
   const text = replyFor(body);
+  // MOCK_SLOW=1 makes the planning call take 8 s, to test the live cost ticker.
+  if (process.env.MOCK_SLOW && /\[stage:plan\]/.test((body.system || []).map((b) => b.text).join(""))) await new Promise((r) => setTimeout(r, 8000));
   const events = [
     { type: "message_start", message: { usage: { input_tokens: 1200, cache_creation_input_tokens: 800, cache_read_input_tokens: 0, output_tokens: 1 } } },
     ...text.match(/[\s\S]{1,200}/g).map((t) => ({ type: "content_block_delta", delta: { type: "text_delta", text: t } })),

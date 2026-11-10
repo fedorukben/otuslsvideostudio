@@ -19,10 +19,17 @@ export async function api(method, path, body) {
 
 // Listeners told about each finished call's cost: (jobId, costUsd) => void
 export const costListeners = new Set();
+// Listeners told when a metered call starts or ends: ({type: "start"|"end", jobId, stage, audioSeconds?}) => void
+export const callListeners = new Set();
+export const emitCall = (ev) => { for (const f of callListeners) try { f(ev); } catch {} };
 
 // Runs one Claude stage through the metered proxy and waits for the reply.
 export async function claude(jobId, stage, request, { onStatus, signal } = {}) {
   const { id } = await api("POST", "/api/claude/start", { jobId, stage, request });
+  emitCall({ type: "start", jobId, stage });
+  try { return await waitFor(jobId, id, onStatus, signal); } finally { emitCall({ type: "end", jobId, stage }); }
+}
+async function waitFor(jobId, id, onStatus, signal) {
   const t0 = Date.now();
   let delay = 1000;
   while (true) {

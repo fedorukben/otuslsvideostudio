@@ -1,4 +1,4 @@
-import { api, costListeners } from "../api.js";
+import { api, costListeners, emitCall } from "../api.js";
 // Whisper speech recognition in the browser via transformers.js.
 // The model downloads once from Hugging Face and is cached by the browser.
 // The audio itself never leaves the computer.
@@ -73,6 +73,10 @@ export async function transcribeRemote(jobId, file, { durationSec, keyterms, onP
     onProgress?.((n + 1) / parts);
   }
   await api("POST", "/api/transcribe/run", { id });
+  emitCall({ type: "start", jobId, stage: "transcribe", audioSeconds: durationSec });
+  try { return await waitTranscript(jobId, id, onStatus); } finally { emitCall({ type: "end", jobId, stage: "transcribe" }); }
+}
+async function waitTranscript(jobId, id, onStatus) {
   const t0 = Date.now();
   while (true) {
     await new Promise((r) => setTimeout(r, 2000));

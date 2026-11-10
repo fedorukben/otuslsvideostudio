@@ -9,10 +9,14 @@ const WHITE_FADE = 0.8;
 
 async function pickCodec() {
   if (!("VideoEncoder" in window)) throw new Error("This browser can't encode video. Please use Chrome or Edge.");
-  for (const codec of ["avc1.640028", "avc1.4d0028", "avc1.42e028"]) {
-    for (const hardwareAcceleration of ["prefer-hardware", "prefer-software"]) {
-      const cfg = { codec, width: W, height: H, bitrate: 6_000_000, framerate: FPS, hardwareAcceleration, avc: { format: "avc" } };
-      try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch {}
+  // "realtime" asks the encoder not to reorder frames (no B-frames), so chunks come out in frame order
+  // and we can number them ourselves. Some browsers (Firefox) don't start their own numbering at zero.
+  for (const latencyMode of ["realtime", "quality"]) {
+    for (const codec of ["avc1.640028", "avc1.4d0028", "avc1.42e028"]) {
+      for (const hardwareAcceleration of ["prefer-hardware", "prefer-software", "no-preference"]) {
+        const cfg = { codec, width: W, height: H, bitrate: 6_000_000, framerate: FPS, hardwareAcceleration, latencyMode, avc: { format: "avc" } };
+        try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch {}
+      }
     }
   }
   throw new Error("This browser can't encode H.264 video at 1080p. Please use an up-to-date Chrome or Edge.");
@@ -111,9 +115,18 @@ export const OUTRO_CANDIDATES = ["/assets/OT_Outro_White.mp4", "/assets/OT%20Out
 
 export async function encodeVideo({ builds, times, captions, duration, outroUrl, onProgress, signal }) {
   const cfg = await pickCodec();
-  const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: "avc", width: W, height: H, frameRate: FPS }, fastStart: "in-memory" });
-  let encErr = null;
-  const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: (e) => (encErr = e) });
+  const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: "avc", width: W, height: H, frameRate: FPS },
+    fastStart: "in-memory", firstTimestampBehavior: "offset" });
+  let encErr = null, outIdx = 0;
+  const output = (chunk, meta) => {
+    try {
+      // In realtime mode chunks arrive in frame order: give frame n the time n/30 s, whatever the encoder stamped.
+      const ts = cfg.latencyMode === "realtime" ? Math.round((outIdx * 1e6) / FPS) : undefined;
+      muxer.addVideoChunk(chunk, meta, ts);
+      outIdx++;
+    } catch (e) { encErr ||= e; }
+  };
+  const enc = new VideoEncoder({ output, error: (e) => (encErr ||= e) });
   enc.configure(cfg);
 
   const cv = new OffscreenCanvas(W, H);
@@ -175,6 +188,8 @@ export async function encodeVideo({ builds, times, captions, duration, outroUrl,
   }
   await enc.flush();
   enc.close();
+  if (encErr) throw encErr;
+  if (!outIdx) throw new Error("The browser's video encoder produced no frames");
   muxer.finalize();
   onProgress?.(1);
   return { video: new Uint8Array(muxer.target.buffer), hasOutro: !!outro, outroUrl: outro ? outroUrl : null, outroDuration: outroFrames / FPS };
@@ -207,6 +222,9 @@ async function getFFmpeg(onLog) {
  */
 export async function muxAudio({ video, audioFile, audioStart, duration, hasOutro, outroUrl, onProgress }) {
   const ff = await getFFmpeg();
+  const logs = [];
+  const keepLog = ({ message }) => { logs.push(message); if (logs.length > 40) logs.shift(); };
+  ff.on("log", keepLog);
   const progress = ({ progress }) => onProgress?.(Math.max(0, Math.min(1, progress)));
   ff.on("progress", progress);
   const ext = (audioFile.name.split(".").pop() || "m4a").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -239,7 +257,11 @@ export async function muxAudio({ video, audioFile, audioStart, duration, hasOutr
   }
   const code = await ff.exec(args);
   ff.off("progress", progress);
-  if (code !== 0) throw new Error("Audio mixing failed (ffmpeg exit code " + code + ")");
+  ff.off("log", keepLog);
+  if (code !== 0) {
+    const tail = logs.filter((l) => /error|invalid|failed|not|unable|cannot/i.test(l)).slice(-4).join(" | ") || logs.slice(-3).join(" | ");
+    throw new Error(`ffmpeg exit code ${code}. ${tail}`);
+  }
   const out = await ff.readFile("out.mp4");
   for (const f of ["video.mp4", `voice.${ext}`, "outro.mp4", "out.mp4"]) { try { await ff.deleteFile(f); } catch {} }
   return new Blob([out], { type: "video/mp4" });

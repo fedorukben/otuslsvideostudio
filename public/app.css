@@ -136,3 +136,5 @@ video { width: 100%; background: #000; display: block; }
 label.switch { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; margin-top: 16px; }
 label.switch input { margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .livecost.bump b { animation: none; } }
+
+.livecost b.tick { font-variant-numeric: tabular-nums; display: inline-block; min-width: 7ch; }

@@ -1,5 +1,5 @@
 // SLS Video Studio — single-page app (no build step).
-import { api, costListeners } from "./api.js";
+import { api, costListeners, callListeners } from "./api.js";
 import { putFile, getFile, delFile } from "./idb.js";
 // The pipeline (and its large libraries) loads only when a video needs it,
 // so sign-in and admin pages work even if a library fails to load.
@@ -256,21 +256,62 @@ function paintProgress(id) {
   document.getElementById("rlabel").textContent = `${r.label} ${pct}%`;
 }
 
-// Live cost: each finished Claude call adds to the running total on screen.
+// ---------- Live cost ticker ----------
+// While a metered call runs, the shown total climbs at an estimated rate for that step
+// (capped at a typical cost for it). When the real bill arrives, the total eases to the exact figure.
+// Rates are USD per second of a typical call: tokens/sec × price; caps are a typical full call.
+const TICK = {
+  "math-pass":   { rate: 0.00008, cap: 0.01 },
+  "plan":        { rate: 0.0012,  cap: 0.40 },
+  "fix":         { rate: 0.0008,  cap: 0.12 },
+  "revise":      { rate: 0.0008,  cap: 0.12 },
+  "frame-check": { rate: 0.00006, cap: 0.006 },
+};
+const money4 = (n) => "$" + Math.max(0, n).toFixed(4);
 function costLine(r) {
-  return `<span class="k">Cost so far</span> <b>${money(r.cost)}</b>` +
-    (r.stageCost ? ` <span class="muted small">(+${money(r.stageCost)} this stage)</span>` : "");
+  return `<span class="k">Cost so far</span> <b class="tick" id="rcostv">${r.pending ? "≈ " : ""}${money4(r.shown ?? r.cost)}</b>` +
+    ` <span class="muted small" id="rcostnote"></span>`;
 }
+callListeners.add((ev) => {
+  const r = running.get(ev.jobId);
+  if (!r) return;
+  if (ev.type === "start") {
+    let t = TICK[ev.stage] || { rate: 0.0005, cap: 0.05 };
+    if (ev.stage === "transcribe") {
+      // AssemblyAI: about $0.26 per hour of audio, usually done in well under a minute
+      const est = ((ev.audioSeconds || 300) / 3600) * 0.26;
+      t = { rate: est / 30, cap: est };
+    }
+    r.pending = { stage: ev.stage, t0: Date.now(), ...t };
+  } else r.pending = null;
+});
 costListeners.add((jobId, c) => {
   const r = running.get(jobId);
   if (!r) return;
   r.cost += c; r.stageCost += c; r.calls += 1;
-  if (!showCost || openJobId() !== jobId) return;
-  const el = document.getElementById("rcost");
-  if (el) { el.innerHTML = costLine(r); el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump"); }
-  const jc = document.getElementById("jobcost"); if (jc) jc.textContent = money(r.cost);
+  r.pending = null;
   const jn = document.getElementById("jobcalls"); if (jn) jn.textContent = r.calls;
 });
+// One timer drives the on-screen number (10 updates a second).
+setInterval(() => {
+  const id = openJobId();
+  const r = id && running.get(id);
+  if (!r || !showCost) return;
+  const est = r.pending ? Math.min(r.pending.cap * 0.85, (r.pending.rate * (Date.now() - r.pending.t0)) / 1000) : 0;
+  const target = r.cost + est;
+  r.shown ??= r.cost;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce) r.shown = target;
+  else if (r.pending) r.shown = Math.max(r.shown, r.shown + (target - r.shown) * 0.35); // only climbs while working
+  else r.shown += (target - r.shown) * 0.25;                                          // eases to the exact bill
+  if (Math.abs(target - r.shown) < 0.00005) r.shown = target;
+  const v = document.getElementById("rcostv");
+  if (v) v.textContent = (r.pending ? "≈ " : "") + money4(r.shown);
+  const note = document.getElementById("rcostnote");
+  if (note) note.textContent = r.pending ? `(estimate while ${r.pending.stage === "transcribe" ? "AssemblyAI" : "Claude"} works; exact when it finishes)`
+    : r.stageCost ? `(+${money(r.stageCost)} this stage)` : "";
+  const jc = document.getElementById("jobcost"); if (jc) jc.textContent = money4(r.shown);
+}, 100);
 
 // ---------------- job page ----------------
 const FLOW = [["analysing", "Transcribe"], ["review-transcript", "Check transcript"], ["planning", "Plan slides"],
@@ -433,8 +474,9 @@ async function slideReview(job, st) {
 
 // ----- done -----
 async function doneView(job, st) {
-  const mp4 = await getFile(`mp4:${job.id}`);
-  const srt = await getFile(`srt:${job.id}`);
+  const mem = (await pipeline()).outputs.get(job.id);
+  const mp4 = mem?.mp4 || (await getFile(`mp4:${job.id}`).catch(() => null));
+  const srt = mem?.srt || (await getFile(`srt:${job.id}`).catch(() => null));
   const out = job.state.output || {};
   const name = out.name || "video";
   st.innerHTML = `<h2>Your video is ready</h2>

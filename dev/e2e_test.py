@@ -1,4 +1,4 @@
-import time, sys
+import time, sys, os
 from playwright.sync_api import sync_playwright
 BASE = "http://localhost:8888"
 MOCK = """
@@ -42,6 +42,14 @@ with sync_playwright() as p:
     time.sleep(1.5)
     pg.screenshot(path=f"{shots}/ui_04_checkpointA.png", full_page=True)
     pg.click("text=Approve and plan slides")
+    if os.environ.get("MOCK_SLOW"):
+        pg.wait_for_selector("#rcostv", timeout=30000)
+        seen = []
+        for i in range(10):
+            pg.wait_for_timeout(1000)
+            if pg.locator("#rcostv").count(): seen.append(pg.inner_text("#rcostv"))
+            if i == 4: pg.screenshot(path=f"{shots}/ui_ticker.png")
+        print("ticker samples:", seen)
     pg.wait_for_selector("text=Checkpoint B", timeout=120000)
     pg.wait_for_selector(".thumb img", timeout=120000)
     time.sleep(1)
