@@ -6,6 +6,7 @@ import { putFile, getFile, delFile } from "./idb.js";
 const pipeline = () => import("./pipeline/run.js");
 import { loadMathJax } from "./pipeline/render.js";
 import { SAMPLE_SCRIPT, RECORDING_TIPS } from "./voice-script.js";
+import { SUBJECTS, subjectOf } from "./subjects.js";
 
 const $app = document.getElementById("app");
 const $nav = document.getElementById("nav");
@@ -167,7 +168,7 @@ function newView() {
     </div>
     <label>Subtitle <span class="muted">(optional, for the title card)</span><input name="subtitle" maxlength="160" placeholder="Building domino walls one piece at a time"></label>
     <label>Stream</label>
-    <select name="stream"><option value="math">Mathematics (Math Study Hall)</option><option value="cp">Coding and Programming (C&amp;P Study Hall)</option></select>
+    <select name="stream">${Object.entries(SUBJECTS).map(([k, s]) => `<option value="${k}">${esc(s.name)} (${esc(s.studyHall)})</option>`).join("")}</select>
     <label>Narration audio <span class="muted">(M4A, MP3 or WAV)</span><input name="audio" type="file" accept="audio/*,.m4a,.mp3,.wav" required></label>
     <label>Your script <span class="muted">(optional; gives exact LaTeX for your math)</span><textarea name="script" rows="5" placeholder="Paste your script, with math as $…$"></textarea></label>
     <label>Tipsheet <span class="muted">(optional; a .tex, .md or .txt file)</span><input name="tipsheet" type="file" accept=".tex,.md,.txt,text/*"></label>
@@ -389,7 +390,7 @@ async function jobView(id, keepScroll) {
   const idx = FLOW.findIndex(([s]) => s === job.status);
   const nowIdx = job.status === "new" ? 0 : idx;
   const hasAudio = !!(await getFile(`audio:${id}`));
-  $app.innerHTML = `<div class="eyebrow">${job.stream === "cp" ? "Coding and Programming" : "Mathematics"} · ${esc(job.eyebrow || "")}</div>
+  $app.innerHTML = `<div class="eyebrow">${esc(subjectOf(job.stream).name)} · ${esc(job.eyebrow || "")}</div>
     <h1>${esc(job.title)}</h1>
     <p class="muted small">${statusTag(job.status)} &nbsp; Created ${when(job.createdAt)}${showCost ? ` · Claude cost so far <b id="jobcost">${money(r ? r.cost : job.costUsd)}</b> (<span id="jobcalls">${r ? r.calls : job.calls || 0}</span> calls)` : ""}${job.approval?.required && job.approval.status === "approved" && job.approval.limitUsd != null ? ` · Approved budget <b>${money(job.approval.limitUsd)}</b>` : ""}</p>
     <div class="steps">${FLOW.map(([s, l], i) => `<div class="${i < nowIdx || job.status === "done" ? "done" : i === nowIdx ? "now" : ""}">${i + 1}. ${l}</div>`).join("")}</div>

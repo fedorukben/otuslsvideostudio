@@ -1,5 +1,6 @@
 import { layoutDiagram, drawDiagram, ease } from "./diagram.js";
 import { AdvancedHost, AREA } from "./advanced.js";
+import { subjectOf } from "../subjects.js";
 // Draws slides in the Ontario Tech style onto a 1920×1080 canvas from the slide spec.
 // Math is typeset by MathJax (SVG) and drawn as images.
 
@@ -41,7 +42,7 @@ export function loadMathJax(src = "/vendor/mathjax/tex-svg-full.js") {
     window.MathJax = {
       tex: {
         inlineMath: [["$", "$"], ["\\(", "\\)"]],
-        packages: { "[+]": ["color", "cancel", "boldsymbol"] },
+        packages: { "[+]": ["color", "cancel", "boldsymbol", "mhchem"] },
         macros: {
           blue: ["{\\color[RGB]{0,119,202}{#1}}", 1], orange: ["{\\color[RGB]{231,93,42}{#1}}", 1],
           navy: ["{\\color[RGB]{0,60,113}{#1}}", 1], grey: ["{\\color[RGB]{91,103,112}{#1}}", 1],
@@ -373,10 +374,7 @@ function titleCard(ctx, spec) {
   cornerArrow(ctx, 168);
 }
 
-const PRACTICE = {
-  math: "Math Study Hall · 1:1 appointments · Workshops · Tipsheets and videos on nool",
-  cp: "C&P Study Hall · 1:1 appointments · Workshops · Tipsheets and videos on nool",
-};
+const practiceLine = (stream) => `${subjectOf(stream).studyHall} · 1:1 appointments · Workshops · Tipsheets and videos on nool`;
 async function summaryBody(ctx, spec, scene, steps) {
   const lays = [];
   for (const s of steps) lays.push(await layoutRich(ctx, s, { size: 42, maxW: CONTENT_W - 140 }));
@@ -397,7 +395,7 @@ async function summaryBody(ctx, spec, scene, steps) {
       setText(ctx, 700, 40, C.white);
       ctx.fillText("More practice?", MARGIN_X, bandY + 56);
       setText(ctx, 300, 34, C.white);
-      ctx.fillText(PRACTICE[spec.stream] || PRACTICE.math, MARGIN_X, bandY + 104);
+      ctx.fillText(practiceLine(spec.stream), MARGIN_X, bandY + 104);
     },
   };
 }

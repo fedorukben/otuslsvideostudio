@@ -1,7 +1,8 @@
+import { subjectOf } from "../subjects.js";
 // System prompts for each Claude stage. The [stage:...] tag is only a label.
 
 export const MATH_PASS = `[stage:math-pass]
-You prepare the narration transcript of a short math or coding explainer video for Ontario Tech University's Student Learning Support.
+You prepare the narration transcript of a short math, coding, chemistry or physics/engineering explainer video for Ontario Tech University's Student Learning Support.
 
 You get speech-recognition chunks (plain words, no notation) and sometimes the narrator's own script.
 For every chunk return:
@@ -65,7 +66,7 @@ Example (a corner square shrinking after the second build starts):
 "const k = 1 - info.ease.inOut(info.progress(info.builds[1] ?? 3, 2.5));\nconst s = 40 + 160 * k;\nctx.strokeStyle = info.colors.navy; ctx.lineWidth = 3;\nctx.fillStyle = info.colors.grey; ctx.globalAlpha = 0.3; ctx.fillRect(700, 200, s, s); ctx.globalAlpha = 1; ctx.strokeRect(700, 200, s, s);\ninfo.math('corner', 700 + s + 20, 200 + s / 2, { align: 'left', alpha: 0.4 + 0.6 * k });"`;
 
 export const PLAN = `[stage:plan]
-You design the slides for a short explainer video made by Ontario Tech University's Student Learning Support (math or coding and programming). The narration is already recorded. Your slides must follow what the narrator actually says, in order.
+You design the slides for a short explainer video made by Ontario Tech University's Student Learning Support (mathematics, coding and programming, chemistry, or physics and engineering). The narration is already recorded. Your slides must follow what the narrator actually says, in order.
 
 Standard arc, 6-8 scenes, each with 1-3 builds (a build is one still that changes when the narration moves on):
 1. Title card (kind "title", one build, starting at chunk 0 with its first words)
@@ -114,15 +115,23 @@ You check frames from a finished explainer video. Each frame is a still taken ju
 For each frame, decide whether the slide matches what is being said (the right content is on screen, nothing obviously wrong, cut off or overlapping, and the math matches the words).
 Reply with JSON only: {"frames":[{"index":0,"ok":true,"issue":""}, ...]}. Keep each issue under 25 words. Only flag real problems.`;
 
-export function mathPassMessage(chunks, script) {
-  return `<chunks>${JSON.stringify(chunks.map(({ id, start, end, text }) => ({ id, start, end, text })))}</chunks>` +
+// Notation rules that depend on the subject; used by the math pass and the slide planner.
+export function notationRule(stream) {
+  if (stream === "chem") return "Subject: Chemistry. Write chemical formulas, ions, states and reactions with mhchem's \\ce{...} inside math, e.g. spoken \"H two O\" -> $\\ce{H2O}$, \"two H two plus O two gives two H two O\" -> $\\ce{2H2 + O2 -> 2H2O}$, \"sulfate two minus\" -> $\\ce{SO4^2-}$, equilibrium -> \\ce{<=>}, states \\ce{(aq)}, \\ce{(s)}. Units upright with a thin space: $25\\,\\mathrm{mL}$, $0.10\\,\\mathrm{mol/L}$. Ordinary algebra stays plain LaTeX.";
+  if (stream === "phys") return "Subject: Physics and Engineering. Units upright with a thin space ($9.8\\,\\mathrm{m/s^2}$, $5\\,\\mathrm{k\\Omega}$, $20\\,^{\\circ}\\mathrm{C}$); vectors with \\vec{F} (or \\hat{x} for unit vectors); derivatives as \\frac{dx}{dt}; subscripts for named quantities, with word subscripts upright ($v_0$, $F_{\\text{net}}$); scientific notation as $3.0 \\times 10^{8}$.";
+  if (stream === "cp") return "Subject: Coding and Programming. Code identifiers and expressions stay as code words, not math, unless they are genuinely mathematical (e.g. Big-O as $O(n^2)$).";
+  return "Subject: Mathematics.";
+}
+
+export function mathPassMessage(chunks, script, stream) {
+  return `${notationRule(stream)}\n\n<chunks>${JSON.stringify(chunks.map(({ id, start, end, text }) => ({ id, start, end, text })))}</chunks>` +
     (script ? `\n\n<script>\n${script}\n</script>` : "\n\n(No script was provided.)");
 }
 
 export function planMessage(job, chunks) {
   const lines = chunks.map((c) => `[chunk ${c.id} | ${c.start.toFixed(1)}-${c.end.toFixed(1)} s]\ncaption: ${c.caption}\nmath: ${c.latex}`).join("\n\n");
   return `Video title: ${job.title}\nSubtitle: ${job.subtitle || "(write one)"}\nTopic eyebrow: ${job.eyebrow || "(choose one)"}\n` +
-    `Stream: ${job.stream === "cp" ? "Coding and Programming" : "Mathematics"}\n` +
+    `${notationRule(job.stream)}\nThe closing "More practice?" band names ${subjectOf(job.stream).studyHall}.\n` +
     (job.state?.notes ? `Narrator's notes for the slides:\n${job.state.notes}\n` : "") +
     (job.state?.tipsheet ? `\nTipsheet this video goes with (match its examples and notation):\n<tipsheet>\n${job.state.tipsheet.slice(0, 30000)}\n</tipsheet>\n` : "") +
     `\nTranscript chunks:\n\n${lines}` +

@@ -54,7 +54,7 @@ export default async (req) => {
       const job = {
         id: newId(), owner: user.email, ownerName: user.name, title: String(b.title).slice(0, 120), durationSec, approval,
         eyebrow: String(b.eyebrow || "").slice(0, 60), subtitle: String(b.subtitle || "").slice(0, 160),
-        stream: b.stream === "cp" ? "cp" : "math", status: approval.status === "pending" ? "awaiting-approval" : "new",
+        stream: ["cp", "chem", "phys"].includes(b.stream) ? b.stream : "math", status: approval.status === "pending" ? "awaiting-approval" : "new",
         createdAt: nowIso(), updatedAt: nowIso(),
         costUsd: 0, calls: 0, audioName: String(b.audioName || ""), state: { notes: String(b.notes || "").slice(0, 4000),
           script: String(b.script || "").slice(0, 60000), tipsheet: String(b.tipsheet || "").slice(0, 60000),

@@ -89,7 +89,7 @@ async function mathPass(job, spoken, ui, size = 15) {
     try {
       const r = await claude(job.id, "math-pass", {
         system: P.MATH_PASS, max_tokens: 16000,
-        messages: [{ role: "user", content: P.mathPassMessage(batch, job.state.script) }],
+        messages: [{ role: "user", content: P.mathPassMessage(batch, job.state.script, job.stream) }],
       }, { onStatus: status(ui, "Math pass") });
       if (r.stopReason !== "max_tokens") parsed = P.parseJSON(r.text);
     } catch (e) {
